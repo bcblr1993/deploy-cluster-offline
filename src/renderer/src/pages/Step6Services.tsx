@@ -1,7 +1,7 @@
 // 步骤6：按节点选服务部署（放置矩阵 + 配置预览 + 部署）。
 
 import { useEffect, useMemo, useState } from 'react'
-import { Alert, Button, Checkbox, Collapse, Select, Space, Table, Tag, Typography } from 'antd'
+import { Alert, Button, Checkbox, Collapse, Input, Select, Space, Table, Tag, Typography } from 'antd'
 import { EyeOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { useWizard } from '../store/wizard'
@@ -20,20 +20,59 @@ function dataPathFor(mountpoint: string, instanceId: string): string {
   return `${mountpoint.replace(/\/+$/, '')}/sprixin-iotcloud-data/${instanceId}`
 }
 
+interface MountInfo {
+  mp: string
+  used?: number
+  type: 'SSD' | 'HDD'
+  sizeBytes: number
+}
+
+// 各服务推荐落盘：redis 默认；pg/kafka 用 SSD；cassandra 用最大机械盘
+const RECO: Partial<Record<ServiceId, 'default' | 'ssd' | 'hdd'>> = {
+  redis: 'default',
+  postgres: 'ssd',
+  kafka: 'ssd',
+  cassandra: 'hdd'
+}
+const RECO_TEXT: Record<'default' | 'ssd' | 'hdd', string> = {
+  default: '默认位置',
+  ssd: '固态盘(SSD)',
+  hdd: '最大机械盘(HDD)'
+}
+
+function recommendMp(service: ServiceId, mps: MountInfo[]): string | undefined {
+  const kind = RECO[service]
+  if (kind === 'ssd') {
+    return mps.filter((m) => m.type === 'SSD').sort((a, b) => b.sizeBytes - a.sizeBytes)[0]?.mp
+  }
+  if (kind === 'hdd') {
+    return mps.filter((m) => m.type === 'HDD').sort((a, b) => b.sizeBytes - a.sizeBytes)[0]?.mp
+  }
+  return undefined
+}
+
+const CUSTOM = '__custom__'
+
 export default function Step6Services() {
   const { nodes, hostnames, placements, togglePlacement, disks, setPlacementDataPath } = useWizard()
   const [catalog, setCatalog] = useState<Record<ServiceId, ServiceMeta> | null>(null)
   const [preview, setPreview] = useState<DeploymentPreview | null>(null)
+  const [customIds, setCustomIds] = useState<Record<string, boolean>>({})
 
-  // 该节点可用挂载点（来自步骤4 扫描）
-  const mountpointsOf = (nodeId: string): { mp: string; used?: number }[] => {
-    const out: { mp: string; used?: number }[] = []
+  // 该节点可用挂载点（来自步骤4 扫描），带磁盘类型/容量
+  const mountpointsOf = (nodeId: string): MountInfo[] => {
+    const out: MountInfo[] = []
     const seen = new Set<string>()
     for (const d of disks[nodeId] ?? []) {
       for (const part of d.partitions) {
         if (part.mountpoint && !seen.has(part.mountpoint)) {
           seen.add(part.mountpoint)
-          out.push({ mp: part.mountpoint, used: part.usedPercent })
+          out.push({
+            mp: part.mountpoint,
+            used: part.usedPercent,
+            type: d.type,
+            sizeBytes: part.sizeBytes
+          })
         }
       }
     }
@@ -124,23 +163,66 @@ export default function Step6Services() {
             {statefulPlacements.map((p) => {
               const node = nodes.find((n) => n.id === p.nodeId)
               const mps = mountpointsOf(p.nodeId)
+              const recoKind = RECO[p.service] ?? 'default'
+              const recoMp = recommendMp(p.service, mps)
               const options = [
                 { value: '', label: '默认（~/sprixin-iotcloud）' },
                 ...mps.map((m) => ({
                   value: dataPathFor(m.mp, p.instanceId),
-                  label: `${m.mp}${m.used != null ? ` · 已用 ${m.used}%` : ''}`
-                }))
+                  label: `${m.mp} · ${m.type}${m.used != null ? ` · 已用 ${m.used}%` : ''}${
+                    m.mp === recoMp ? ' · 推荐' : ''
+                  }`
+                })),
+                { value: CUSTOM, label: '手动指定路径…' }
               ]
+              const optionValues = mps.map((m) => dataPathFor(m.mp, p.instanceId))
+              const isCustom =
+                !!customIds[p.instanceId] || (!!p.dataPath && !optionValues.includes(p.dataPath))
+              const selectValue = isCustom ? CUSTOM : p.dataPath ?? ''
+              const recoPath = recoMp ? dataPathFor(recoMp, p.instanceId) : ''
+              const recoApplied = recoKind === 'default' ? !p.dataPath : p.dataPath === recoPath
               return (
-                <Space key={p.instanceId}>
-                  <Tag color="blue">{p.instanceId}</Tag>
-                  <Text type="secondary">{hostnames[p.nodeId] || node?.ip}</Text>
+                <Space key={p.instanceId} wrap>
+                  <Tag color="blue" style={{ width: 92, textAlign: 'center' }}>
+                    {p.instanceId}
+                  </Tag>
+                  <Text type="secondary" style={{ width: 64 }}>
+                    {hostnames[p.nodeId] || node?.ip}
+                  </Text>
+                  <Tag color="gold">推荐: {RECO_TEXT[recoKind]}</Tag>
                   <Select
-                    style={{ width: 380 }}
-                    value={p.dataPath ?? ''}
+                    style={{ width: 360 }}
+                    value={selectValue}
                     options={options}
-                    onChange={(v) => setPlacementDataPath(p.instanceId, v || undefined)}
+                    onChange={(v) => {
+                      if (v === CUSTOM) {
+                        setCustomIds((s) => ({ ...s, [p.instanceId]: true }))
+                      } else {
+                        setCustomIds((s) => ({ ...s, [p.instanceId]: false }))
+                        setPlacementDataPath(p.instanceId, v || undefined)
+                      }
+                    }}
                   />
+                  {isCustom && (
+                    <Input
+                      style={{ width: 280 }}
+                      placeholder="/data/xxx 绝对路径"
+                      value={p.dataPath ?? ''}
+                      onChange={(e) =>
+                        setPlacementDataPath(p.instanceId, e.target.value || undefined)
+                      }
+                    />
+                  )}
+                  {!recoApplied && (recoKind === 'default' || recoMp) && (
+                    <Typography.Link
+                      onClick={() => {
+                        setCustomIds((s) => ({ ...s, [p.instanceId]: false }))
+                        setPlacementDataPath(p.instanceId, recoKind === 'default' ? undefined : recoPath)
+                      }}
+                    >
+                      用推荐
+                    </Typography.Link>
+                  )}
                 </Space>
               )
             })}
