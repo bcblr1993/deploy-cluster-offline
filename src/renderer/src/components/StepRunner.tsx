@@ -1,20 +1,32 @@
 // 通用步骤执行器（UI）：点击→生成 ActionPlan→§15 确认→执行+实时日志/状态。
 // 运行状态存于全局 store（按 runKey），切换步骤再回来不丢；执行期间置全局 busy 锁。
 
-import { useMemo, useState } from 'react'
-import { Badge, Button, Collapse, Space, Tag, Typography } from 'antd'
-import { PlayCircleOutlined } from '@ant-design/icons'
+import { useEffect, useMemo, useState } from 'react'
+import { Button, Collapse, Progress, Space, Tag, Typography } from 'antd'
+import {
+  CheckCircleFilled,
+  CloseCircleFilled,
+  LoadingOutlined,
+  MinusCircleOutlined,
+  PlayCircleOutlined
+} from '@ant-design/icons'
 import ConfirmActionModal from './ConfirmActionModal'
 import { useWizard } from '../store/wizard'
 import type { ActionPlan, NodeConfig, NodeTaskResult, TaskStatus } from '@shared/types'
 
 const { Text } = Typography
 
-const STATUS_BADGE: Record<TaskStatus, 'default' | 'processing' | 'success' | 'error'> = {
-  pending: 'default',
-  running: 'processing',
-  success: 'success',
-  failed: 'error'
+function StatusIcon({ status }: { status: TaskStatus }) {
+  switch (status) {
+    case 'success':
+      return <CheckCircleFilled style={{ color: '#52c41a' }} />
+    case 'failed':
+      return <CloseCircleFilled style={{ color: '#ff4d4f' }} />
+    case 'running':
+      return <LoadingOutlined spin style={{ color: '#1677ff' }} />
+    default:
+      return <MinusCircleOutlined style={{ color: '#bfbfbf' }} />
+  }
 }
 const STATUS_TEXT: Record<TaskStatus, string> = {
   pending: '待执行',
@@ -45,11 +57,18 @@ export default function StepRunner({
 }: StepRunnerProps) {
   const { runs, startRun, endRun } = useWizard()
   const [plan, setPlan] = useState<ActionPlan | null>(null)
+  const [activeKeys, setActiveKeys] = useState<string[]>([])
+
+  // 受控展开态：节点列表变化时默认全部展开（避免非受控被进度刷新顶开）
+  useEffect(() => {
+    setActiveKeys(nodes.map((n) => n.id))
+  }, [nodes])
 
   const rs = runs[runKey]
   const running = rs?.running ?? false
   const status = rs?.status ?? {}
   const logs = rs?.logs ?? {}
+  const progress = rs?.progress ?? {}
 
   async function onClickRun() {
     const p = await buildPlan()
@@ -72,16 +91,30 @@ export default function StepRunner({
 
   const items = useMemo(
     () =>
-      nodes.map((n) => ({
-        key: n.id,
-        label: (
-          <Space>
-            <Badge status={STATUS_BADGE[status[n.id] ?? 'pending']} />
-            <Text strong>{n.ip || n.id}</Text>
-            <Tag>{STATUS_TEXT[status[n.id] ?? 'pending']}</Tag>
-          </Space>
-        ),
-        children: (
+      nodes.map((n) => {
+        const st = status[n.id] ?? 'pending'
+        const pct = progress[n.id]
+        return {
+          key: n.id,
+          label: (
+            <Space>
+              <StatusIcon status={st} />
+              <Text strong>{n.ip || n.id}</Text>
+              <Tag color={st === 'success' ? 'success' : st === 'failed' ? 'error' : undefined}>
+                {STATUS_TEXT[st]}
+              </Tag>
+            </Space>
+          ),
+          extra:
+            st === 'running' && typeof pct === 'number' ? (
+              <Progress
+                percent={pct}
+                size="small"
+                status="active"
+                style={{ width: 160 }}
+              />
+            ) : null,
+          children: (
           <pre
             style={{
               margin: 0,
@@ -97,8 +130,9 @@ export default function StepRunner({
             {(logs[n.id] ?? []).join('\n') || '（暂无输出）'}
           </pre>
         )
-      })),
-    [nodes, status, logs]
+        }
+      }),
+    [nodes, status, logs, progress]
   )
 
   return (
@@ -112,7 +146,13 @@ export default function StepRunner({
       >
         {actionLabel}
       </Button>
-      {nodes.length > 0 && <Collapse items={items} defaultActiveKey={nodes.map((n) => n.id)} />}
+      {nodes.length > 0 && (
+        <Collapse
+          activeKey={activeKeys}
+          onChange={(keys) => setActiveKeys(keys as string[])}
+          items={items}
+        />
+      )}
       <ConfirmActionModal
         plan={plan}
         nodes={nodes}
