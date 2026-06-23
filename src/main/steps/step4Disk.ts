@@ -1,14 +1,22 @@
 // 步骤4：磁盘分区预览（只读，设计文档 §7 步骤4）。
+// 用 lsblk -P（KEY="value"）解析，对空字段健壮，能正确显示未挂载磁盘/分区。
 
 import { sshPool } from '../ssh/SshPool'
 import type { DiskInfo, DiskPartition, NodeConfig } from '@shared/types'
 
-// 整盘：NAME SIZE(bytes) ROTA TYPE MODEL；ROTA=0→SSD,1→HDD
-const DISK_CMD = 'lsblk -dbno NAME,SIZE,ROTA,TYPE,MODEL'
-// 分区树：NAME SIZE(bytes) FSTYPE MOUNTPOINT TYPE
-const PART_CMD = 'lsblk -bno NAME,SIZE,FSTYPE,MOUNTPOINT,TYPE'
+// 整盘 + 分区一次列出；-b 字节，-P 键值对（空字段也保留）
+const LSBLK_CMD =
+  'lsblk -b -P -o NAME,SIZE,ROTA,TYPE,FSTYPE,MOUNTPOINT,MODEL'
 // 挂载点使用率
 const DF_CMD = 'df -B1 --output=target,pcent 2>/dev/null | tail -n +2'
+
+function parseKv(line: string): Record<string, string> {
+  const out: Record<string, string> = {}
+  const re = /([A-Z][A-Z%_]*)="([^"]*)"/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(line)) !== null) out[m[1]] = m[2]
+  return out
+}
 
 function parseDfUsage(out: string): Map<string, number> {
   const m = new Map<string, number>()
@@ -25,50 +33,51 @@ function parseDfUsage(out: string): Map<string, number> {
 
 export async function probeDisks(node: NodeConfig): Promise<DiskInfo[]> {
   const client = await sshPool.acquire(node)
-  const [disksOut, partsOut, dfOut] = await Promise.all([
-    client.exec(DISK_CMD, { timeoutMs: 15000 }).then((r) => r.stdout),
-    client.exec(PART_CMD, { timeoutMs: 15000 }).then((r) => r.stdout),
+  const [lsblkOut, dfOut] = await Promise.all([
+    client.exec(LSBLK_CMD, { timeoutMs: 15000 }).then((r) => r.stdout),
     client.exec(DF_CMD, { timeoutMs: 15000 }).then((r) => r.stdout)
   ])
-
   const usage = parseDfUsage(dfOut)
 
-  // 整盘
   const disks: DiskInfo[] = []
-  for (const line of disksOut.split('\n')) {
-    const cols = line.trim().split(/\s+/)
-    if (cols.length < 4) continue
-    const [name, size, rota, type, ...model] = cols
-    if (type !== 'disk') continue
-    disks.push({
-      name,
-      sizeBytes: parseInt(size, 10) || 0,
-      type: rota === '0' ? 'SSD' : 'HDD',
-      model: model.join(' ') || undefined,
-      partitions: []
-    })
+  const pending: { parentHint: string; part: DiskPartition }[] = []
+
+  for (const line of lsblkOut.split('\n')) {
+    if (!line.trim()) continue
+    const kv = parseKv(line)
+    const name = kv.NAME
+    const type = kv.TYPE
+    if (!name) continue
+
+    if (type === 'disk') {
+      disks.push({
+        name,
+        sizeBytes: parseInt(kv.SIZE, 10) || 0,
+        type: kv.ROTA === '0' ? 'SSD' : 'HDD',
+        model: kv.MODEL?.trim() || undefined,
+        partitions: []
+      })
+    } else if (type === 'part' || type === 'lvm' || type === 'crypt') {
+      const mountpoint = kv.MOUNTPOINT || undefined
+      pending.push({
+        parentHint: name,
+        part: {
+          name,
+          sizeBytes: parseInt(kv.SIZE, 10) || 0,
+          fsType: kv.FSTYPE || undefined,
+          mountpoint,
+          usedPercent: mountpoint ? usage.get(mountpoint) : undefined
+        }
+      })
+    }
   }
 
-  // 分区归属到对应整盘（按名字前缀匹配，如 sda1→sda, nvme0n1p1→nvme0n1）
-  for (const line of partsOut.split('\n')) {
-    const cols = line.trim().split(/\s+/)
-    if (cols.length < 2) continue
-    const name = cols[0].replace(/^[├└─|`\s]+/, '')
-    const type = cols[cols.length - 1]
-    if (type !== 'part' && type !== 'lvm') continue
-    const sizeBytes = parseInt(cols[1], 10) || 0
-    // FSTYPE 与 MOUNTPOINT 在中间，可能缺列
-    const mid = cols.slice(2, cols.length - 1)
-    const fsType = mid[0] && mid[0] !== '/' && !mid[0].startsWith('/') ? mid[0] : undefined
-    const mountpoint = mid.find((c) => c.startsWith('/'))
-    const part: DiskPartition = {
-      name,
-      sizeBytes,
-      fsType,
-      mountpoint,
-      usedPercent: mountpoint ? usage.get(mountpoint) : undefined
-    }
-    const parent = disks.find((d) => name.startsWith(d.name))
+  // 分区归属到整盘（按名字前缀，如 sda1→sda、nvme0n1p2→nvme0n1）
+  for (const { parentHint, part } of pending) {
+    const parent =
+      disks.find((d) => parentHint.startsWith(d.name)) ??
+      // lvm/crypt 等无法前缀匹配的，挂到第一块盘下兜底展示，避免“消失”
+      disks[0]
     if (parent) parent.partitions.push(part)
   }
 
