@@ -9,6 +9,7 @@ import {
   Card,
   Checkbox,
   Col,
+  Collapse,
   Empty,
   Row,
   Space,
@@ -18,7 +19,7 @@ import {
   Tooltip,
   Typography
 } from 'antd'
-import { ReloadOutlined } from '@ant-design/icons'
+import { ReloadOutlined, ColumnHeightOutlined, VerticalAlignMiddleOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { useWizard } from '../store/wizard'
 import { ipc } from '../ipc/client'
@@ -64,64 +65,56 @@ function containerColumns(): ColumnsType<ContainerInfo> {
   ]
 }
 
-function NodeCard({ ip, st }: { ip: string; st?: NodeStatus }) {
-  const managed = st?.containers.filter((c) => c.service).length ?? 0
+function NodeHeader({ ip, st }: { ip: string; st?: NodeStatus }) {
   return (
-    <Card
-      size="small"
-      title={
-        <Space>
-          <Badge status={st?.reachable ? (st.dockerActive ? 'success' : 'warning') : 'error'} />
-          <Text strong>{st?.hostname || ip}</Text>
-          <Text type="secondary" style={{ fontFamily: 'monospace', fontWeight: 400 }}>
-            {ip}
-          </Text>
-        </Space>
-      }
-      extra={
-        st?.reachable ? (
-          <Space size={4}>
-            <Tag>{st.arch}</Tag>
-            <Tag color={st.dockerActive ? 'green' : 'red'}>
-              docker {st.dockerActive ? 'active' : 'down'}
-            </Tag>
-          </Space>
-        ) : (
-          <Tag color="error">不可连</Tag>
-        )
-      }
-    >
-      {!st ? (
-        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="未刷新" />
-      ) : !st.reachable ? (
-        <Alert type="error" showIcon message={st.error || '连接失败'} />
+    <Space>
+      <Badge status={st?.reachable ? (st.dockerActive ? 'success' : 'warning') : 'error'} />
+      <Text strong>{st?.hostname || ip}</Text>
+      <Text type="secondary" style={{ fontFamily: 'monospace', fontWeight: 400 }}>
+        {ip}
+      </Text>
+    </Space>
+  )
+}
+
+function NodeExtra({ st }: { st?: NodeStatus }) {
+  if (!st) return null
+  if (!st.reachable) return <Tag color="error">不可连</Tag>
+  const managed = st.containers.filter((c) => c.service).length
+  return (
+    <Space size={4}>
+      <Text type="secondary" style={{ fontSize: 12 }}>
+        服务 {managed} · 容器 {st.containers.length}
+      </Text>
+      <Tag>{st.arch}</Tag>
+      <Tag color={st.dockerActive ? 'green' : 'red'}>docker {st.dockerActive ? 'active' : 'down'}</Tag>
+    </Space>
+  )
+}
+
+function NodeBody({ st }: { st?: NodeStatus }) {
+  if (!st) return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="未刷新" />
+  if (!st.reachable) return <Alert type="error" showIcon message={st.error || '连接失败'} />
+  return (
+    <Space direction="vertical" size="small" style={{ width: '100%' }}>
+      <Space size="large" wrap>
+        <Text type="secondary">{st.osPretty}</Text>
+        {st.load1 != null && <Text type="secondary">load {st.load1}</Text>}
+        {st.rootUsedPercent != null && <Text type="secondary">/ 使用 {st.rootUsedPercent}%</Text>}
+      </Space>
+      {st.containers.length === 0 ? (
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="无运行容器" />
       ) : (
-        <Space direction="vertical" size="small" style={{ width: '100%' }}>
-          <Space size="large" wrap>
-            <Text type="secondary">{st.osPretty}</Text>
-            {st.load1 != null && <Text type="secondary">load {st.load1}</Text>}
-            {st.rootUsedPercent != null && (
-              <Text type="secondary">/ 使用 {st.rootUsedPercent}%</Text>
-            )}
-            <Text type="secondary">
-              本工具服务 {managed} · 容器 {st.containers.length}
-            </Text>
-          </Space>
-          {st.containers.length === 0 ? (
-            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="无运行容器" />
-          ) : (
-            <Table
-              rowKey="name"
-              size="small"
-              pagination={false}
-              showHeader={false}
-              columns={containerColumns()}
-              dataSource={st.containers}
-            />
-          )}
-        </Space>
+        <Table
+          rowKey="name"
+          size="small"
+          pagination={false}
+          showHeader={false}
+          columns={containerColumns()}
+          dataSource={st.containers}
+        />
       )}
-    </Card>
+    </Space>
   )
 }
 
@@ -131,6 +124,10 @@ export default function Overview() {
   const [loading, setLoading] = useState(false)
   const [auto, setAuto] = useState(false) // 自动刷新默认关闭
   const [deleteData, setDeleteData] = useState(false)
+  const [deleteImages, setDeleteImages] = useState(false)
+  const [removeInstallDir, setRemoveInstallDir] = useState(false)
+  const [removeDocker, setRemoveDocker] = useState(false)
+  const [activeKeys, setActiveKeys] = useState<string[]>([])
   const timer = useRef<ReturnType<typeof setInterval>>()
 
   const refresh = useCallback(async () => {
@@ -145,6 +142,14 @@ export default function Overview() {
   useEffect(() => {
     refresh()
   }, [refresh])
+
+  // 默认全部展开（节点列表变化时同步）
+  useEffect(() => {
+    setActiveKeys(nodes.map((n) => n.id))
+  }, [nodes])
+
+  const allOpen = activeKeys.length >= nodes.length && nodes.length > 0
+  const toggleAll = () => setActiveKeys(allOpen ? [] : nodes.map((n) => n.id))
 
   useEffect(() => {
     if (auto) {
@@ -173,6 +178,12 @@ export default function Overview() {
           </Col>
           <Col>
             <Space>
+              <Button
+                icon={allOpen ? <VerticalAlignMiddleOutlined /> : <ColumnHeightOutlined />}
+                onClick={toggleAll}
+              >
+                {allOpen ? '折叠全部' : '展开全部'}
+              </Button>
               <Tooltip title="每 10s 自动刷新">
                 <Space size={4}>
                   <Text type="secondary">自动刷新</Text>
@@ -187,13 +198,16 @@ export default function Overview() {
         </Row>
       </Card>
 
-      <Row gutter={[16, 16]}>
-        {nodes.map((n) => (
-          <Col key={n.id} xs={24} xl={12}>
-            <NodeCard ip={n.ip} st={status[n.id]} />
-          </Col>
-        ))}
-      </Row>
+      <Collapse
+        activeKey={activeKeys}
+        onChange={(keys) => setActiveKeys(keys as string[])}
+        items={nodes.map((n) => ({
+          key: n.id,
+          label: <NodeHeader ip={n.ip} st={status[n.id]} />,
+          extra: <NodeExtra st={status[n.id]} />,
+          children: <NodeBody st={status[n.id]} />
+        }))}
+      />
 
       <Card
         size="small"
@@ -204,17 +218,45 @@ export default function Overview() {
           <Text type="secondary">
             停止并移除所有节点上「本工具部署」的服务（倒序：应用层先停）。外部容器不受影响。
           </Text>
-          <Checkbox checked={deleteData} onChange={(e) => setDeleteData(e.target.checked)}>
-            <Text type={deleteData ? 'danger' : undefined}>
-              同时删除数据目录（不可恢复）
-            </Text>
-          </Checkbox>
+          <Space direction="vertical" size={4}>
+            <Checkbox checked={deleteData} onChange={(e) => setDeleteData(e.target.checked)}>
+              <Text type={deleteData ? 'danger' : undefined}>同时删除数据目录（不可恢复）</Text>
+            </Checkbox>
+            <Checkbox checked={deleteImages} onChange={(e) => setDeleteImages(e.target.checked)}>
+              <Text type={deleteImages ? 'danger' : undefined}>删除所有服务镜像</Text>
+            </Checkbox>
+            <Checkbox
+              checked={removeInstallDir}
+              onChange={(e) => setRemoveInstallDir(e.target.checked)}
+            >
+              <Text type={removeInstallDir ? 'danger' : undefined}>
+                删除安装目录（~/sprixin-iotcloud）
+              </Text>
+            </Checkbox>
+            <Checkbox checked={removeDocker} onChange={(e) => setRemoveDocker(e.target.checked)}>
+              <Text type={removeDocker ? 'danger' : undefined}>卸载 Docker 引擎（彻底清理）</Text>
+            </Checkbox>
+          </Space>
           <StepRunner
             runKey="overview-uninstall"
             nodes={nodes}
             actionLabel="一键全卸载所有节点服务"
-            buildPlan={() => ipc.overviewPlanUninstallAll(nodes, { deleteData })}
-            run={(runId) => ipc.overviewUninstallAll(runId, nodes, { deleteData })}
+            buildPlan={() =>
+              ipc.overviewPlanUninstallAll(nodes, {
+                deleteData,
+                deleteImages,
+                removeInstallDir,
+                removeDocker
+              })
+            }
+            run={(runId) =>
+              ipc.overviewUninstallAll(runId, nodes, {
+                deleteData,
+                deleteImages,
+                removeInstallDir,
+                removeDocker
+              })
+            }
             onDone={() => refresh()}
           />
         </Space>

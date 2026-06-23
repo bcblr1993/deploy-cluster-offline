@@ -143,9 +143,11 @@ export interface Step2Read {
 export interface Step3Params {
   timezone: string // 默认 Asia/Shanghai
 }
+/** 用户可选的对时模式（docs/03） */
+export type TimeMode = 'auto' | 'all-internet' | 'source'
 export interface TimePlan {
   strategy: 'all-online' | 'partial-online' | 'all-offline'
-  sourceNodeId?: string // 部分联网/全离线时的时间源
+  sourceNodeId?: string // 部分联网/全离线/指定源时的时间源
   onlineNodeIds: string[]
 }
 
@@ -267,4 +269,10 @@ export interface NodeStatus {
 export interface UninstallAllParams {
   /** 勾选则连数据目录一并删除 */
   deleteData: boolean
+  /** 删除本工具服务镜像（postgres/redis/kafka/cassandra/iotcloud/netdata/wechat） */
+  deleteImages: boolean
+  /** 卸载 Docker 引擎本身（二进制/服务/etc-docker/data-root） */
+  removeDocker: boolean
+  /** 删除整个安装目录 ~/sprixin-iotcloud */
+  removeInstallDir: boolean
 }
