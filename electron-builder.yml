@@ -1,0 +1,37 @@
+appId: com.sprixin.deploy-cluster-offline
+productName: 离线集群部署工具
+directories:
+  output: release/${version}
+  buildResources: build
+files:
+  - out/**/*
+  - package.json
+# ssh2 含可选原生加密依赖，需随包解压而非塞进 asar
+asarUnpack:
+  - node_modules/ssh2/**/*
+  - node_modules/cpu-features/**/*
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: false
+
+mac:
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+  category: public.app-category.developer-tools
+
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Utility
+  maintainer: sprixin
