@@ -10,6 +10,7 @@ import type {
   DiskInfo,
   InstallerPackage,
   NodeConfig,
+  NodeDockerInfo,
   NodeProbe,
   NodeStatus,
   NodeTaskResult,
@@ -84,6 +85,8 @@ const api = {
     ipcRenderer.invoke('step5:plan', nodes, params),
   step5Run: (runId: string, nodes: NodeConfig[], params: Step5Params): Promise<NodeTaskResult[]> =>
     ipcRenderer.invoke('step5:run', runId, nodes, params),
+  step5ProbeDocker: (nodes: NodeConfig[]): Promise<Record<string, NodeDockerInfo>> =>
+    ipcRenderer.invoke('step5:probeDocker', nodes),
 
   // 步骤6
   getCatalog: (): Promise<Record<ServiceId, ServiceMeta>> => ipcRenderer.invoke('catalog:get'),

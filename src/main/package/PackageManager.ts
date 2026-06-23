@@ -59,7 +59,9 @@ export async function registerPackage(pkgPath: string): Promise<InstallerPackage
   })
 
   const dockerDir = join(tmp, PKG_ROOT, 'docker')
-  const arch = await detectArchFromElf(join(dockerDir, 'bin', 'dockerd'))
+  const dockerdPath = join(dockerDir, 'bin', 'dockerd')
+  const arch = await detectArchFromElf(dockerdPath)
+  const dockerVersion = await detectDockerVersion(dockerdPath)
 
   // 归位到 extract/<arch>
   const finalDir = join(extractRoot(), arch)
@@ -67,9 +69,26 @@ export async function registerPackage(pkgPath: string): Promise<InstallerPackage
   await fs.mkdir(finalDir, { recursive: true })
   await fs.rename(join(tmp, PKG_ROOT), join(finalDir, PKG_ROOT))
 
-  const pkg: InstallerPackage = { arch, path: pkgPath }
+  const pkg: InstallerPackage = { arch, path: pkgPath, dockerVersion }
   registered.set(arch, pkg)
   return pkg
+}
+
+/** 从 dockerd 二进制中提取版本号（跨平台：读 buffer 扫描，不依赖 strings） */
+async function detectDockerVersion(dockerdPath: string): Promise<string | undefined> {
+  try {
+    const buf = await fs.readFile(dockerdPath)
+    const s = buf.toString('latin1')
+    // 取形如 2x.y.z 的孤立版本串（排除 go/containerd 的 1.x），按出现频次取最高
+    const re = /(?<![\w.])(2[0-9]\.\d{1,2}\.\d{1,2})(?![\w.])/g
+    const counts = new Map<string, number>()
+    let m: RegExpExecArray | null
+    while ((m = re.exec(s)) !== null) counts.set(m[1], (counts.get(m[1]) ?? 0) + 1)
+    if (counts.size === 0) return undefined
+    return [...counts.entries()].sort((a, b) => b[1] - a[1])[0][0]
+  } catch {
+    return undefined
+  }
 }
 
 /** 取某架构对应的已登记包 */

@@ -54,6 +54,14 @@ export interface InstallerPackage {
   arch: Arch
   path: string
   version?: string
+  /** 包内 docker 二进制版本（用于与节点已装版本对比） */
+  dockerVersion?: string
+}
+
+/** 步骤5：节点当前 docker 安装情况 */
+export interface NodeDockerInfo {
+  installed: boolean
+  version?: string
 }
 
 /** 任务（每节点）状态机 —— 对应编排引擎 */

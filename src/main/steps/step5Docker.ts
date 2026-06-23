@@ -3,8 +3,39 @@
 
 import { basename } from 'path'
 import { runStep, execLogged, type NodeRunCtx } from '../orchestrator/runStep'
+import { sshPool } from '../ssh/SshPool'
 import { getPackage } from '../package/PackageManager'
-import type { Arch, ActionPlan, NodeConfig, NodeTaskResult, Step5Params } from '@shared/types'
+import type {
+  Arch,
+  ActionPlan,
+  NodeConfig,
+  NodeDockerInfo,
+  NodeTaskResult,
+  Step5Params
+} from '@shared/types'
+
+/** 探测各节点当前 docker 安装情况与版本（步骤5 进入时显示是否与安装包一致） */
+export async function probeDockerVersions(
+  nodes: NodeConfig[]
+): Promise<Record<string, NodeDockerInfo>> {
+  const out: Record<string, NodeDockerInfo> = {}
+  await Promise.all(
+    nodes.map(async (n) => {
+      try {
+        const c = await sshPool.acquire(n)
+        const r = await c.execSudo(
+          'docker version --format "{{.Server.Version}}" 2>/dev/null || docker --version 2>/dev/null || true',
+          { timeoutMs: 10000 }
+        )
+        const m = r.stdout.match(/(\d+\.\d+\.\d+)/)
+        out[n.id] = { installed: !!m, version: m?.[1] }
+      } catch {
+        out[n.id] = { installed: false }
+      }
+    })
+  )
+  return out
+}
 
 function archOf(raw: string): Arch {
   if (raw === 'x86_64') return 'x86_64'

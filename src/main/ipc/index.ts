@@ -5,7 +5,7 @@ import { probeNode } from '../steps/step1Probe'
 import { planStep2, readStep2, runStep2 } from '../steps/step2Hosts'
 import { planStep3, planTimeStrategy, runStep3 } from '../steps/step3Time'
 import { probeDisks } from '../steps/step4Disk'
-import { planStep5, runStep5 } from '../steps/step5Docker'
+import { planStep5, probeDockerVersions, runStep5 } from '../steps/step5Docker'
 import { deployStep6, planStep6, previewStep6 } from '../steps/step6Services'
 import { planUninstall, runUninstall } from '../steps/uninstall'
 import { planUninstallAll, probeOverview, uninstallAll } from '../steps/overview'
@@ -114,6 +114,7 @@ export function registerIpc(): void {
     (_e, runId: string, nodes: NodeConfig[], params: Step5Params) =>
       runStep5(runId, nodes, params)
   )
+  ipcMain.handle('step5:probeDocker', (_e, nodes: NodeConfig[]) => probeDockerVersions(nodes))
 
   // ── 步骤6：服务编排 ──
   ipcMain.handle('catalog:get', () => CATALOG)
