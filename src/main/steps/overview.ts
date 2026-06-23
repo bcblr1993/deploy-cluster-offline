@@ -26,6 +26,17 @@ const CONTAINER_TO_SERVICE: Record<string, ServiceId> = {
   'wechat-messenger-container': 'wechat-messenger'
 }
 
+/** 识别容器属于哪个服务：先精确匹配，再兼容 compose 默认命名 <project>-<service>-<n>（如 redis-redis-1） */
+function identifyService(name: string): ServiceId | undefined {
+  if (CONTAINER_TO_SERVICE[name]) return CONTAINER_TO_SERVICE[name]
+  const m = name.match(/^(.+?)-(.+?)-\d+$/)
+  if (m) {
+    if (CONTAINER_TO_SERVICE[m[2]]) return CONTAINER_TO_SERVICE[m[2]]
+    if (CONTAINER_TO_SERVICE[m[1]]) return CONTAINER_TO_SERVICE[m[1]]
+  }
+  return undefined
+}
+
 // 服务 → 容器名（卸载时按名强删兜底）
 const SERVICE_CONTAINER: Record<ServiceId, string> = {
   postgres: 'postgres',
@@ -93,7 +104,7 @@ function parseContainers(out: string): ContainerInfo[] {
     if (!name) continue
     list.push({
       name,
-      service: CONTAINER_TO_SERVICE[name],
+      service: identifyService(name),
       status,
       state: parseState(status),
       ports: ports.trim() || undefined
@@ -222,7 +233,7 @@ export async function uninstallAll(
       ).stdout.includes('Y')
       const hasContainer =
         (
-          await ctx.client.execSudo(`docker ps -aq -f 'name=^${cname}$' 2>/dev/null`, {
+          await ctx.client.execSudo(`docker ps -aq -f 'name=${cname}' 2>/dev/null`, {
             timeoutMs: 10000
           })
         ).stdout.trim().length > 0
@@ -238,8 +249,11 @@ export async function uninstallAll(
         )
         for (const line of r.stdout.split('\n')) if (line.trim()) ctx.log(line.trim())
       } else {
-        ctx.log(`[${svc}] 容器存在但无 compose，docker rm -f ${cname}`)
-        await ctx.client.execSudo(`docker rm -f ${cname} 2>&1 | tail -3`, { timeoutMs: 60000 })
+        ctx.log(`[${svc}] 容器存在但无 compose，docker rm -f`)
+        await ctx.client.execSudo(
+          `docker ps -aq -f 'name=${cname}' | xargs -r docker rm -f 2>&1 | tail -3`,
+          { timeoutMs: 60000 }
+        )
       }
 
       if (params.deleteData) {
