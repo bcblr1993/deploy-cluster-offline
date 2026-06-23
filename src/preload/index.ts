@@ -23,6 +23,7 @@ import type {
   Step3Params,
   Step5Params,
   Step6Params,
+  TimeMode,
   TimePlan,
   UninstallParams,
   UninstallAllParams
@@ -54,8 +55,11 @@ const api = {
     ipcRenderer.invoke('step2:run', runId, nodes, params),
 
   // 步骤3
-  step3Strategy: (nodes: NodeConfig[]): Promise<TimePlan> =>
-    ipcRenderer.invoke('step3:strategy', nodes),
+  step3Strategy: (
+    nodes: NodeConfig[],
+    mode: TimeMode,
+    sourceNodeId?: string
+  ): Promise<TimePlan> => ipcRenderer.invoke('step3:strategy', nodes, mode, sourceNodeId),
   step3Plan: (nodes: NodeConfig[], plan: TimePlan, params: Step3Params): Promise<ActionPlan> =>
     ipcRenderer.invoke('step3:plan', nodes, plan, params),
   step3Run: (

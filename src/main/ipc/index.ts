@@ -24,6 +24,7 @@ import type {
   Step5Params,
   Step6Params,
   ServicePlacement,
+  TimeMode,
   TimePlan,
   UninstallParams,
   UninstallAllParams
@@ -61,7 +62,11 @@ export function registerIpc(): void {
   )
 
   // ── 步骤3：时间对齐 ──
-  ipcMain.handle('step3:strategy', (_e, nodes: NodeConfig[]) => planTimeStrategy(nodes))
+  ipcMain.handle(
+    'step3:strategy',
+    (_e, nodes: NodeConfig[], mode: TimeMode, sourceNodeId?: string) =>
+      planTimeStrategy(nodes, mode, sourceNodeId)
+  )
   ipcMain.handle(
     'step3:plan',
     (_e, nodes: NodeConfig[], plan: TimePlan, params: Step3Params) =>

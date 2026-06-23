@@ -9,19 +9,37 @@ import type {
   NodeConfig,
   NodeTaskResult,
   Step3Params,
+  TimeMode,
   TimePlan
 } from '@shared/types'
 
 const PUBLIC_NTP = ['ntp.aliyun.com', 'ntp1.aliyun.com', 'cn.pool.ntp.org']
 
-/** 计算时间源策略（§7 步骤3 三分支） */
-export async function planTimeStrategy(nodes: NodeConfig[]): Promise<TimePlan> {
+/**
+ * 计算时间源策略（docs/03）：先探测在线情况，再按用户所选模式生成计划。
+ * - auto：按联网情况自动（全在线/部分/全离线）
+ * - all-internet：全部各自对公网 NTP
+ * - source：指定某节点为时间源，其余对齐它
+ */
+export async function planTimeStrategy(
+  nodes: NodeConfig[],
+  mode: TimeMode = 'auto',
+  sourceNodeId?: string
+): Promise<TimePlan> {
   const online: string[] = []
   await Promise.all(
     nodes.map(async (n) => {
       if (await checkOnline(n)) online.push(n.id)
     })
   )
+
+  if (mode === 'all-internet') {
+    return { strategy: 'all-online', onlineNodeIds: online }
+  }
+  if (mode === 'source' && sourceNodeId) {
+    return { strategy: 'partial-online', sourceNodeId, onlineNodeIds: online }
+  }
+  // auto
   if (online.length === nodes.length) {
     return { strategy: 'all-online', onlineNodeIds: online }
   }
@@ -98,13 +116,15 @@ export async function runStep3(
     const conf = /CONF=(.*)/.exec(det.stdout)?.[1]?.trim() || ''
     const hasBin = /HASBIN=(\d)/.exec(det.stdout)?.[1] === '1'
 
-    if (hasBin && conf) {
-      // 决定本节点角色
-      let role: 'public' | 'source' | 'client'
-      if (plan.strategy === 'all-online') role = 'public'
-      else if (ctx.node.id === plan.sourceNodeId) role = 'source'
-      else role = 'client'
+    const online = plan.onlineNodeIds.includes(ctx.node.id)
+    // 角色：public(对公网) / source(时间源) / client(跟随源)
+    let role: 'public' | 'source' | 'client'
+    if (plan.strategy === 'all-online') role = 'public'
+    else if (ctx.node.id === plan.sourceNodeId) role = 'source'
+    else role = 'client'
 
+    if (hasBin && conf) {
+      // 优先 chrony（能担当时间源/客户端各角色）
       const content = buildChronyConf(role, sourceNode?.ip)
       ctx.log(`配置 chrony (${role}) → ${conf}`)
       const write = [
@@ -116,22 +136,37 @@ export async function runStep3(
       await execLogged(ctx, write, { sudo: true })
       await startChronyService(ctx)
       await execLogged(ctx, 'chronyc makestep 2>/dev/null || true', { sudo: true })
-      const tr = await execLogged(ctx, 'chronyc tracking 2>/dev/null | head -5 || true', { sudo: true })
+      await execLogged(ctx, 'chronyc tracking 2>/dev/null | head -5 || true', { sudo: true })
       ctx.log('chrony 状态已回读')
-      void tr
-    } else {
-      // 退化方案：以源机时间对齐（§7 步骤3 兜底）
-      ctx.log('未检测到 chrony，使用 date 退化对齐')
-      if (ctx.node.id !== plan.sourceNodeId && sourceNode) {
-        const src = await sshPool.acquire(sourceNode)
-        const { stdout } = await src.exec('date +%s', { timeoutMs: 8000 })
-        const epoch = parseInt(stdout.trim(), 10)
-        if (epoch > 0) {
-          await execLogged(ctx, `date -s '@${epoch}' && hwclock -w 2>/dev/null || true`, { sudo: true })
-        }
-      } else {
-        await execLogged(ctx, 'hwclock -w 2>/dev/null || true', { sudo: true })
+    } else if (role === 'client' && sourceNode) {
+      // 客户端无 chrony：始终跟随「指定时间源」（date 从源取时，不去对公网）
+      ctx.log(`未检测到 chrony，date 跟随时间源 ${sourceNode.ip}`)
+      const src = await sshPool.acquire(sourceNode)
+      const { stdout } = await src.exec('date +%s', { timeoutMs: 8000 })
+      const epoch = parseInt(stdout.trim(), 10)
+      if (epoch > 0) {
+        await execLogged(ctx, `date -s '@${epoch}' && hwclock -w 2>/dev/null || true`, { sudo: true })
       }
+    } else if (online) {
+      // public/source 且有网、无 chrony：用系统自带 systemd-timesyncd 对公网 NTP（无需安装）
+      ctx.log('未检测到 chrony，使用 systemd-timesyncd 对公网 NTP')
+      const tsScript = [
+        `mkdir -p /etc/systemd/timesyncd.conf.d`,
+        `cat > /etc/systemd/timesyncd.conf.d/deploy.conf <<'DEPLOYEOF'`,
+        '[Time]',
+        `NTP=${PUBLIC_NTP.join(' ')}`,
+        `DEPLOYEOF`,
+        `timedatectl set-ntp true`,
+        `systemctl restart systemd-timesyncd 2>/dev/null || systemctl restart systemd-timesyncd.service 2>/dev/null || true`
+      ].join('\n')
+      await execLogged(ctx, tsScript, { sudo: true })
+      await execLogged(ctx, 'timedatectl status 2>/dev/null | grep -iE "NTP|synchroniz" || true', {
+        sudo: true
+      })
+    } else {
+      // 源机离线（基准）或无源：写硬件钟兜底
+      ctx.log('无网且无 chrony，作为基准写硬件钟')
+      await execLogged(ctx, 'hwclock -w 2>/dev/null || true', { sudo: true })
     }
 
     const now = await ctx.client.exec('date "+%Y-%m-%d %H:%M:%S %z"', { timeoutMs: 8000 })
