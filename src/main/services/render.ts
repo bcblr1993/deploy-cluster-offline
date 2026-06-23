@@ -16,7 +16,8 @@ const PG_PASSWORD = 'JvUcMbDxjYY4M8sj'
 const REDIS_PASSWORD = 'eRLvW23KYiAakR'
 const APP_IMAGE = 'iotcloud:4.1.0-20260530.1'
 
-const REMOTE_BASE = '/opt/deploy-tool/services'
+// 展示用基路径（~ = 当前用户 home）；实际部署按节点 home 解析（§部署目录）
+const DISPLAY_BASE = '~/sprixin-iotcloud/services'
 
 interface Member {
   instanceId: string
@@ -47,10 +48,24 @@ function kafkaClusterId(memberIps: string[]): string {
 }
 
 function remoteDir(service: ServiceId): string {
-  return `${REMOTE_BASE}/${service}`
+  return `${DISPLAY_BASE}/${service}`
 }
-function dataPath(p: ServicePlacement): string {
-  return p.dataPath || `${remoteDir(p.service)}/data`
+
+/** 与安装包逐一对齐的数据目录名（保证家目录结构与包一致） */
+function defaultDataDir(service: ServiceId): string {
+  switch (service) {
+    case 'kafka':
+      return './kafka_0_data'
+    case 'cassandra':
+      return './cassandra_node1_data'
+    default:
+      return './data'
+  }
+}
+
+/** 数据卷宿主侧：默认与包一致的相对目录，或用户指定的绝对路径 */
+function dataVol(p: ServicePlacement): string {
+  return p.dataPath || defaultDataDir(p.service)
 }
 
 // ───────── 各服务渲染 ─────────
@@ -72,7 +87,7 @@ services:
       TZ: Asia/Shanghai
     networks: [proxy]
     volumes:
-      - ${dataPath(p)}:/var/lib/postgresql/data
+      - ${dataVol(p)}:/var/lib/postgresql/data
       - /etc/localtime:/etc/localtime:ro
     restart: always
 `
@@ -94,7 +109,7 @@ services:
     ports:
       - "6379:6379"
     volumes:
-      - ${dataPath(p)}:/data
+      - ${dataVol(p)}:/data
       - /etc/localtime:/etc/localtime:ro
     command: redis-server --requirepass ${REDIS_PASSWORD}
     restart: always
@@ -128,7 +143,7 @@ services:
       - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
       - KAFKA_CFG_INTER_BROKER_LISTENER_NAME=PLAINTEXT
     volumes:
-      - ${dataPath(p)}:/bitnami/kafka
+      - ${dataVol(p)}:/bitnami/kafka
       - /etc/localtime:/etc/localtime:ro
     restart: always
 `
@@ -160,7 +175,7 @@ services:
       - KAFKA_CFG_DEFAULT_REPLICATION_FACTOR=${rf}
       - KAFKA_CFG_MIN_INSYNC_REPLICAS=${rf - 1}
     volumes:
-      - ${dataPath(p)}:/bitnami/kafka
+      - ${dataVol(p)}:/bitnami/kafka
       - /etc/localtime:/etc/localtime:ro
     restart: always
 `
@@ -188,7 +203,8 @@ services:
       - CASSANDRA_ENDPOINT_SNITCH=GossipingPropertyFileSnitch
       - CASSANDRA_NUM_TOKENS=256
     volumes:
-      - ${dataPath(p)}:/var/lib/cassandra
+      - ${dataVol(p)}:/var/lib/cassandra
+      - ./logs:/var/log/cassandra
       - /etc/localtime:/etc/localtime:ro
     restart: unless-stopped
 `
@@ -213,7 +229,8 @@ services:
       - CASSANDRA_BROADCAST_RPC_ADDRESS=${me.ip}
       - CASSANDRA_RPC_ADDRESS=0.0.0.0
     volumes:
-      - ${dataPath(p)}:/var/lib/cassandra
+      - ${dataVol(p)}:/var/lib/cassandra
+      - ./logs:/var/log/cassandra
       - /etc/localtime:/etc/localtime:ro
     restart: unless-stopped
 `
@@ -352,6 +369,12 @@ export function renderDeployment(
         continue
     }
 
+    // 需要 mkdir -p + chmod 777 的目录：有状态服务的数据卷（kafka 等容器非 root，否则写不进）
+    const chmodDirs: string[] = []
+    if (m.dataMount) chmodDirs.push(dataVol(p))
+    if (p.service === 'cassandra') chmodDirs.push('./logs')
+    if (p.service === 'iotcloud') chmodDirs.push('./logs')
+
     instances.push({
       instanceId: p.instanceId,
       service: p.service,
@@ -360,7 +383,8 @@ export function renderDeployment(
       remoteDir: remoteDir(p.service),
       compose,
       env,
-      cluster
+      cluster,
+      chmodDirs
     })
   }
 

@@ -211,11 +211,14 @@ export interface RenderedInstance {
   service: ServiceId
   nodeId: string
   nodeIp: string
+  /** 展示用目录（~ 开头）；实际部署时按节点 home 解析 */
   remoteDir: string
   compose: string
   env?: string
   /** 是否集群模式 */
   cluster: boolean
+  /** 需要 mkdir -p 并 chmod 777 的目录（相对 ./x 或绝对路径），如 kafka 的 data 目录 */
+  chmodDirs: string[]
 }
 
 /** 部署预览/计划 */
@@ -234,5 +237,34 @@ export interface Step6Params {
 export interface UninstallParams {
   placements: ServicePlacement[]
   /** 是否同时删除数据卷（danger） */
+  deleteData: boolean
+}
+
+// ───────── 运维总览（设计 docs/01-…） ─────────
+
+export interface ContainerInfo {
+  name: string
+  /** 映射到 catalog 的服务；undefined = 外部容器 */
+  service?: ServiceId
+  status: string // docker ps 的 Status 原文
+  state: 'running' | 'exited' | 'restarting' | 'unknown'
+  ports?: string
+}
+
+export interface NodeStatus {
+  reachable: boolean
+  hostname?: string
+  osPretty?: string
+  arch?: string
+  dockerActive: boolean
+  load1?: number
+  rootUsedPercent?: number
+  containers: ContainerInfo[]
+  error?: string
+}
+
+/** 一键全卸载参数 */
+export interface UninstallAllParams {
+  /** 勾选则连数据目录一并删除 */
   deleteData: boolean
 }

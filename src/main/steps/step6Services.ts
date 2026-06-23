@@ -5,11 +5,7 @@ import { emitRunEvent } from '../ipc/emit'
 import { sshPool } from '../ssh/SshPool'
 import { renderDeployment } from '../services/render'
 import { meta } from '../services/catalog'
-import {
-  extractIotcloudConf,
-  extractImage,
-  findImageTar
-} from '../package/PackageManager'
+import { findImageTar } from '../package/PackageManager'
 import type {
   ActionPlan,
   Arch,
@@ -20,8 +16,6 @@ import type {
   ServicePlacement,
   Step6Params
 } from '@shared/types'
-
-const REMOTE_SERVICES = '/opt/deploy-tool/services'
 
 export function previewStep6(
   placements: ServicePlacement[],
@@ -88,35 +82,54 @@ export async function deployStep6(
   const involved = [...new Set(preview.instances.map((i) => i.nodeId))]
   for (const id of involved) setStatus(id, 'running')
 
+  // 解析每个节点的 home（按登录用户，不走 sudo），部署到 ~/sprixin-iotcloud
+  const homeByNode: Record<string, string> = {}
+  for (const nodeId of involved) {
+    const client = await sshPool.acquire(nodeById(nodeId))
+    const h = (await client.exec('echo $HOME', { timeoutMs: 8000 })).stdout.trim()
+    homeByNode[nodeId] = h || '/root'
+  }
+  const baseOf = (nodeId: string): string => `${homeByNode[nodeId]}/sprixin-iotcloud`
+  const dirOf = (nodeId: string, service: string): string => `${baseOf(nodeId)}/services/${service}`
+
   try {
-    // ── Phase 1: 下发 compose/.env（+ iotcloud conf 原样下发） ──
+    // ── Phase 1: 最小覆盖 + 创建数据目录(chmod 777) ──
+    // 整包已在步骤5 解压到 ~/sprixin-iotcloud（含原始 compose/conf）。
+    // 只对集群化服务覆盖 compose、对 iotcloud 覆盖 .env，其余沿用原包文件（§02 设计）。
     for (const nodeId of involved) {
       const node = nodeById(nodeId)
       const client = await sshPool.acquire(node)
       for (const inst of instOnNode(nodeId)) {
-        await emitLog(runId, nodeId, `[${inst.service}] 写入 compose`)
-        const write = [
-          `mkdir -p '${inst.remoteDir}'`,
-          `cat > '${inst.remoteDir}/docker-compose.yml' <<'DEPLOYEOF'`,
-          inst.compose,
-          `DEPLOYEOF`
-        ]
-        if (inst.env) {
-          write.push(`cat > '${inst.remoteDir}/.env' <<'DEPLOYEOF'`, inst.env, `DEPLOYEOF`)
+        const dir = dirOf(nodeId, inst.service)
+        const overlayCompose =
+          (inst.service === 'kafka' || inst.service === 'cassandra') && inst.cluster
+        const overlayEnv = inst.service === 'iotcloud' && !!inst.env
+
+        const write = [`mkdir -p '${dir}'`]
+        if (overlayCompose) {
+          await emitLog(runId, nodeId, `[${inst.service}] 覆盖集群 compose`)
+          write.push(`cat > '${dir}/docker-compose.yml' <<'DEPLOYEOF'`, inst.compose, `DEPLOYEOF`)
+        }
+        if (overlayEnv) {
+          await emitLog(runId, nodeId, `[iotcloud] 写入 .env（注入依赖地址）`)
+          write.push(`cat > '${dir}/.env' <<'DEPLOYEOF'`, inst.env as string, `DEPLOYEOF`)
+        }
+        // 数据/日志目录：mkdir + chmod 777（kafka 等容器以非 root 运行，否则写不进卷）
+        for (const c of inst.chmodDirs) {
+          const resolved = resolveDir(dir, c)
+          write.push(`mkdir -p '${resolved}'`, `chmod 777 '${resolved}'`)
         }
         await client.execSudo(write.join('\n'), { timeoutMs: 30000 })
-
-        // iotcloud: 下发原始 conf（不改 thingsboard.yml）
-        if (inst.service === 'iotcloud') {
-          const um = await client.exec('uname -m', { timeoutMs: 8000 })
-          const confDir = await extractIotcloudConf(archOf(um.stdout.trim()))
-          await emitLog(runId, nodeId, '[iotcloud] 上传 conf 目录')
-          await client.putDir(`${confDir}/conf`, `${inst.remoteDir}/conf`)
+        if (inst.chmodDirs.length) {
+          await emitLog(runId, nodeId, `[${inst.service}] 数据目录已建并 chmod 777`)
+        }
+        if (!overlayCompose && inst.service !== 'iotcloud') {
+          await emitLog(runId, nodeId, `[${inst.service}] 使用原包 compose（未改动）`)
         }
       }
     }
 
-    // ── Phase 2: 载镜像（按节点所需服务，去重） ──
+    // ── Phase 2: 载镜像（镜像已随整包在 ~/sprixin-iotcloud/images，直接 docker load） ──
     for (const nodeId of involved) {
       const node = nodeById(nodeId)
       const client = await sshPool.acquire(node)
@@ -131,12 +144,10 @@ export async function deployStep6(
           await emitLog(runId, nodeId, `[${svc}] ⚠ 包内未找到镜像 tar(${prefix})，跳过`)
           continue
         }
-        await emitLog(runId, nodeId, `[${svc}] 抽取并上传镜像 ${tar}`)
-        const localTar = await extractImage(arch, tar)
-        const remoteTar = `/opt/deploy-tool/images/${tar}`
-        await client.putFile(localTar, remoteTar)
-        await emitLog(runId, nodeId, `[${svc}] docker load`)
-        await client.execSudo(`docker load -i '${remoteTar}'`, { timeoutMs: 300000 })
+        await emitLog(runId, nodeId, `[${svc}] docker load ${tar}`)
+        await client.execSudo(`docker load -i '${baseOf(nodeId)}/images/${tar}'`, {
+          timeoutMs: 300000
+        })
       }
     }
 
@@ -146,19 +157,20 @@ export async function deployStep6(
         const inst = preview.instances.find((i) => i.instanceId === instId)!
         const node = nodeById(inst.nodeId)
         const client = await sshPool.acquire(node)
+        const dir = dirOf(inst.nodeId, inst.service)
 
         if (inst.service === 'cassandra' && inst.cluster) {
           // 串行 bootstrap：seed 优先，逐个等待 UN（简化：起后轮询）
           await emitLog(runId, inst.nodeId, `[cassandra] 启动（集群串行）`)
-          await client.execSudo(`cd '${inst.remoteDir}' && docker-compose up -d`, {
+          await client.execSudo(`cd '${dir}' && docker-compose up -d`, {
             timeoutMs: 120000
           })
           await waitCassandraUN(runId, inst, client)
         } else if (inst.service === 'iotcloud') {
-          await runIotcloud(runId, inst, client, params, nodes)
+          await runIotcloud(runId, inst, client, params, nodes, dir)
         } else {
           await emitLog(runId, inst.nodeId, `[${inst.service}] docker-compose up -d`)
-          await client.execSudo(`cd '${inst.remoteDir}' && docker-compose up -d`, {
+          await client.execSudo(`cd '${dir}' && docker-compose up -d`, {
             timeoutMs: 180000
           })
         }
@@ -204,12 +216,18 @@ async function waitCassandraUN(
   await emitLog(runId, inst.nodeId, `[cassandra] ⚠ 等待 UN 超时，请人工检查`)
 }
 
+/** 解析 chmod 目录：相对 ./x → ${base}/x；绝对路径原样 */
+function resolveDir(base: string, p: string): string {
+  return p.startsWith('/') ? p : `${base}/${p.replace(/^\.\//, '')}`
+}
+
 async function runIotcloud(
   runId: string,
   inst: RenderedInstance,
   client: import('../ssh/SshClient').SshClient,
   params: Step6Params,
-  nodes: NodeConfig[]
+  nodes: NodeConfig[],
+  dir: string
 ): Promise<void> {
   // cassandra 集群 → 先预建 keyspace RF=3（§17.6），避免 TB 以 RF=1 建库
   const cas = params.placements.filter((p) => p.service === 'cassandra')
@@ -223,11 +241,12 @@ async function runIotcloud(
     )
   }
   // 两段式：先 install（初始化 DB schema），再正式启动（§16.7）
-  await emitLog(runId, inst.nodeId, '[iotcloud] 初始化（install）…')
+  // 两段式：先 docker-compose-install.yml 初始化 DB schema（阻塞），再正式 up -d（与原包 start.sh 一致）
+  await emitLog(runId, inst.nodeId, '[iotcloud] 初始化（docker-compose-install.yml）…')
   await client.execSudo(
-    `cd '${inst.remoteDir}' && docker-compose run --rm iotcloud /bin/bash install.sh 2>&1 | tail -20 || true`,
+    `cd '${dir}' && docker-compose -f docker-compose-install.yml up 2>&1 | tail -25 || true`,
     { timeoutMs: 600000 }
   )
   await emitLog(runId, inst.nodeId, '[iotcloud] 正式启动 up -d')
-  await client.execSudo(`cd '${inst.remoteDir}' && docker-compose up -d`, { timeoutMs: 180000 })
+  await client.execSudo(`cd '${dir}' && docker-compose up -d`, { timeoutMs: 180000 })
 }

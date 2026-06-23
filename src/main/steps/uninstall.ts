@@ -52,6 +52,16 @@ export async function runUninstall(
   const nodeById = (id: string): NodeConfig => nodes.find((n) => n.id === id)!
   const downFlag = params.deleteData ? '-v' : ''
 
+  // 解析每节点 home（与部署一致：~/sprixin-iotcloud）
+  const homeByNode: Record<string, string> = {}
+  for (const nodeId of involved) {
+    const client = await sshPool.acquire(nodeById(nodeId))
+    const h = (await client.exec('echo $HOME', { timeoutMs: 8000 })).stdout.trim()
+    homeByNode[nodeId] = h || '/root'
+  }
+  const dirOf = (nodeId: string, service: string): string =>
+    `${homeByNode[nodeId]}/sprixin-iotcloud/services/${service}`
+
   // 倒序：应用层先停，存储层后停（§20.2）
   const reversed = [...preview.order].reverse()
   try {
@@ -59,6 +69,7 @@ export async function runUninstall(
       for (const instId of tier) {
         const inst = preview.instances.find((i) => i.instanceId === instId)!
         const client = await sshPool.acquire(nodeById(inst.nodeId))
+        const dir = dirOf(inst.nodeId, inst.service)
         emitRunEvent({
           runId,
           nodeId: inst.nodeId,
@@ -66,7 +77,7 @@ export async function runUninstall(
           line: `[${inst.service}] docker-compose down ${downFlag}`
         })
         await client.execSudo(
-          `cd '${inst.remoteDir}' 2>/dev/null && docker-compose down ${downFlag} || echo '已不存在，跳过'`,
+          `cd '${dir}' 2>/dev/null && docker-compose down ${downFlag} || echo '已不存在，跳过'`,
           { timeoutMs: 120000 }
         )
       }
