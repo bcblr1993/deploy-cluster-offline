@@ -41,7 +41,7 @@ export async function planStep2(nodes: NodeConfig[], params: Step2Params): Promi
   const previews = nodes.map((n) => {
     const r = buildManagedHosts(reads[n.id]?.hosts ?? '', entries)
     const cur = reads[n.id]?.hostname || '(未知)'
-    return `# ${n.ip}  主机名 ${cur} → ${params.hostnames[n.id]}  | 新增 ${r.added} 跳过重复 ${r.skipped}\n${r.block || '(无新增映射)'}`
+    return `# ${n.ip}  主机名 ${cur} → ${params.hostnames[n.id]}  | 新增 ${r.added} 覆盖旧条目 ${r.overridden}\n${r.block}`
   })
   return {
     stepId: 'step2',
@@ -49,7 +49,10 @@ export async function planStep2(nodes: NodeConfig[], params: Step2Params): Promi
     items: nodes.map((n) => ({
       nodeId: n.id,
       summary: `${n.ip}：主机名 ${reads[n.id]?.hostname || '?'} → ${params.hostnames[n.id] ?? '(未设置)'}`,
-      affects: ['hostnamectl set-hostname', '/etc/hosts 托管块（保留原内容、去重合并）']
+      affects: [
+        'hostnamectl set-hostname（强制覆盖）',
+        '/etc/hosts：移除同 IP/主机名的旧映射，仅保留一条权威条目'
+      ]
     })),
     preview: previews.join('\n\n')
   }
@@ -77,10 +80,10 @@ export async function runStep2(
       if (r1.code !== 0) throw new Error(`设置主机名失败 (code=${r1.code})`)
     }
 
-    // 2) 合并 hosts（保留原内容，去重）
+    // 2) 合并 hosts（强制覆盖同 IP/主机名的旧条目，只保留一条）
     const curHosts = (await ctx.client.exec('cat /etc/hosts 2>/dev/null', { timeoutMs: 8000 })).stdout
-    const { merged, added, skipped } = buildManagedHosts(curHosts, entries)
-    ctx.log(`hosts 合并：新增 ${added} 条，跳过重复 ${skipped} 条`)
+    const { merged, added, overridden } = buildManagedHosts(curHosts, entries)
+    ctx.log(`hosts 合并：新增 ${added} 条，强制覆盖旧条目 ${overridden} 条`)
 
     const write = [
       `cp /etc/hosts /etc/hosts.deploytool.bak 2>/dev/null || true`,

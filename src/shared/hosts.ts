@@ -28,45 +28,47 @@ export function stripManagedBlock(hosts: string): string {
   return out.join('\n')
 }
 
-/** 原始内容里已存在的 `ip hostname` 组合 */
-function existingPairs(hosts: string): Set<string> {
-  const set = new Set<string>()
-  for (const raw of hosts.split('\n')) {
-    const line = raw.trim()
-    if (!line || line.startsWith('#')) continue
-    const toks = line.split(/\s+/)
-    const ip = toks[0]
-    for (const name of toks.slice(1)) set.add(`${ip} ${name}`)
-  }
-  return set
-}
-
 export interface MergedHosts {
-  /** 托管块内容（可能为空字符串） */
+  /** 托管块内容 */
   block: string
   /** 合并后的完整 /etc/hosts */
   merged: string
   /** 新增条目数 */
   added: number
-  /** 因重复被跳过的条目数 */
-  skipped: number
+  /** 被强制覆盖（移除）的旧冲突条目数 */
+  overridden: number
 }
 
 /**
- * 把集群映射合并进现有 hosts：
+ * 把集群映射合并进现有 hosts（强制覆盖、只保留一条）：
  * - 先剥离旧托管块；
- * - 集群条目里凡是原文件已有相同 `ip hostname` 的，跳过不重复加入；
- * - 其余写入新的托管块。
+ * - 从原文件里移除所有「同 IP 或同主机名」的旧映射行（视为被覆盖，保证每个主机/IP 仅一条）；
+ * - 集群条目全部写入新的托管块（权威映射）。
+ * 注释与无关条目（如 localhost）保留不动。
  */
 export function buildManagedHosts(existing: string, entries: HostEntry[]): MergedHosts {
   const base = stripManagedBlock(existing).replace(/\n+$/, '')
-  const pairs = existingPairs(base)
   const valid = entries.filter((e) => e.ip && e.hostname)
-  const filtered = valid.filter((e) => !pairs.has(`${e.ip} ${e.hostname}`))
-  const skipped = valid.length - filtered.length
-  const block = filtered.length
-    ? [HOSTS_BEGIN, ...filtered.map((e) => `${e.ip} ${e.hostname}`), HOSTS_END].join('\n')
-    : ''
-  const merged = block ? `${base}\n\n${block}\n` : `${base}\n`
-  return { block, merged, added: filtered.length, skipped }
+  const ips = new Set(valid.map((e) => e.ip))
+  const names = new Set(valid.map((e) => e.hostname))
+
+  let overridden = 0
+  const kept = base.split('\n').filter((line) => {
+    const t = line.trim()
+    if (!t || t.startsWith('#')) return true // 保留空行/注释
+    const toks = t.split(/\s+/)
+    const ip = toks[0]
+    const hostnames = toks.slice(1)
+    // 命中同 IP 或同主机名 → 旧冲突映射，强制移除
+    if (ips.has(ip) || hostnames.some((h) => names.has(h))) {
+      overridden++
+      return false
+    }
+    return true
+  })
+
+  const baseKept = kept.join('\n').replace(/\n{3,}/g, '\n\n').replace(/\n+$/, '')
+  const block = [HOSTS_BEGIN, ...valid.map((e) => `${e.ip} ${e.hostname}`), HOSTS_END].join('\n')
+  const merged = baseKept ? `${baseKept}\n\n${block}\n` : `${block}\n`
+  return { block, merged, added: valid.length, overridden }
 }

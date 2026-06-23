@@ -67,8 +67,8 @@ export default function Step2Hostname() {
   return (
     <Space direction="vertical" size="large" style={{ width: '100%' }}>
       <Text type="secondary">
-        先读取机器现有主机名与 /etc/hosts；应用时会保留原有内容，仅把集群映射写入托管块，
-        已存在的相同条目不会重复添加。
+        先读取机器现有主机名与 /etc/hosts；应用时<Text type="warning">强制覆盖</Text>同 IP/主机名的旧映射，
+        每个主机仅保留一条权威条目（localhost 等无关条目与注释保留）。覆盖前会在确认弹窗给出提醒。
       </Text>
 
       <Space>
@@ -92,7 +92,7 @@ export default function Step2Hostname() {
                 <Space>
                   <Text strong>{n.ip}</Text>
                   <Tag color="green">新增 {r.added}</Tag>
-                  <Tag>跳过重复 {r.skipped}</Tag>
+                  <Tag color={r.overridden ? 'orange' : undefined}>覆盖旧条目 {r.overridden}</Tag>
                 </Space>
               ),
               children: (
