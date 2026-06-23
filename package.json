@@ -17,6 +17,8 @@
     "dist:linux": "electron-vite build && electron-builder --linux"
   },
   "dependencies": {
+    "@fontsource/jetbrains-mono": "^5.2.8",
+    "@fontsource/sora": "^5.2.8",
     "ssh2": "^1.16.0"
   },
   "devDependencies": {
