@@ -3,6 +3,7 @@
 import { create } from 'zustand'
 import type {
   ClusterProject,
+  DiskInfo,
   InstallerPackage,
   NodeConfig,
   NodeProbe,
@@ -18,6 +19,7 @@ export interface RunState {
   running: boolean
   status: Record<string, TaskStatus>
   logs: Record<string, string[]>
+  progress: Record<string, number>
 }
 
 function renumber(placements: ServicePlacement[], service: ServiceId): ServicePlacement[] {
@@ -50,6 +52,8 @@ interface WizardState {
   probing: Record<string, boolean>
   hostnames: Record<string, string>
   placements: ServicePlacement[]
+  /** 步骤4 扫描结果，供步骤6 选数据落盘磁盘用 */
+  disks: Record<string, DiskInfo[]>
   /** 各步骤运行状态（key 如 step2/step3/step5/step6-deploy/uninstall） */
   runs: Record<string, RunState>
   /** 全局锁：任一步骤执行中为 true，期间禁止导航 */
@@ -66,6 +70,9 @@ interface WizardState {
   initHostnames: () => void
   /** 在某节点上放置/取消某服务（singleton 时互斥） */
   togglePlacement: (service: ServiceId, nodeId: string, singleton: boolean) => void
+  /** 设置/清除某实例的数据落盘路径 */
+  setPlacementDataPath: (instanceId: string, dataPath?: string) => void
+  setDisks: (disks: Record<string, DiskInfo[]>) => void
   /** 开始一次运行：初始化状态、置 busy */
   startRun: (key: string, runId: string, nodeIds: string[]) => void
   /** 结束一次运行：清 running，按是否还有其它运行更新 busy */
@@ -87,6 +94,7 @@ export const useWizard = create<WizardState>((set, get) => ({
   probing: {},
   hostnames: {},
   placements: [],
+  disks: {},
   runs: {},
   busy: false,
 
@@ -128,6 +136,15 @@ export const useWizard = create<WizardState>((set, get) => ({
       return { placements: renumber(next, service) }
     }),
 
+  setPlacementDataPath: (instanceId, dataPath) =>
+    set((s) => ({
+      placements: s.placements.map((p) =>
+        p.instanceId === instanceId ? { ...p, dataPath } : p
+      )
+    })),
+
+  setDisks: (disks) => set({ disks }),
+
   startRun: (key, runId, nodeIds) =>
     set((s) => ({
       busy: true,
@@ -137,7 +154,8 @@ export const useWizard = create<WizardState>((set, get) => ({
           runId,
           running: true,
           status: Object.fromEntries(nodeIds.map((id) => [id, 'pending' as TaskStatus])),
-          logs: {}
+          logs: {},
+          progress: {}
         }
       }
     })),
@@ -160,6 +178,8 @@ export const useWizard = create<WizardState>((set, get) => ({
         next = { ...r, logs: { ...r.logs, [e.nodeId]: [...(r.logs[e.nodeId] ?? []), e.line] } }
       } else if (e.kind === 'status' && e.status) {
         next = { ...r, status: { ...r.status, [e.nodeId]: e.status } }
+      } else if (e.kind === 'progress' && typeof e.percent === 'number') {
+        next = { ...r, progress: { ...r.progress, [e.nodeId]: e.percent } }
       }
       return { runs: { ...s.runs, [key]: next } }
     }),

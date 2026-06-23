@@ -1,7 +1,7 @@
 // 步骤6：按节点选服务部署（放置矩阵 + 配置预览 + 部署）。
 
 import { useEffect, useMemo, useState } from 'react'
-import { Alert, Button, Checkbox, Collapse, Divider, Space, Table, Tag, Typography } from 'antd'
+import { Alert, Button, Checkbox, Collapse, Select, Space, Table, Tag, Typography } from 'antd'
 import { EyeOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { useWizard } from '../store/wizard'
@@ -16,10 +16,32 @@ import type {
 
 const { Text } = Typography
 
+function dataPathFor(mountpoint: string, instanceId: string): string {
+  return `${mountpoint.replace(/\/+$/, '')}/sprixin-iotcloud-data/${instanceId}`
+}
+
 export default function Step6Services() {
-  const { nodes, hostnames, placements, togglePlacement } = useWizard()
+  const { nodes, hostnames, placements, togglePlacement, disks, setPlacementDataPath } = useWizard()
   const [catalog, setCatalog] = useState<Record<ServiceId, ServiceMeta> | null>(null)
   const [preview, setPreview] = useState<DeploymentPreview | null>(null)
+
+  // 该节点可用挂载点（来自步骤4 扫描）
+  const mountpointsOf = (nodeId: string): { mp: string; used?: number }[] => {
+    const out: { mp: string; used?: number }[] = []
+    const seen = new Set<string>()
+    for (const d of disks[nodeId] ?? []) {
+      for (const part of d.partitions) {
+        if (part.mountpoint && !seen.has(part.mountpoint)) {
+          seen.add(part.mountpoint)
+          out.push({ mp: part.mountpoint, used: part.usedPercent })
+        }
+      }
+    }
+    return out
+  }
+
+  // 有数据卷的实例（可选落盘磁盘）
+  const statefulPlacements = placements.filter((p) => catalog?.[p.service]?.dataMount)
 
   useEffect(() => {
     ipc.getCatalog().then(setCatalog).catch(() => undefined)
@@ -92,6 +114,40 @@ export default function Step6Services() {
         dataSource={nodes}
       />
 
+      {statefulPlacements.length > 0 && (
+        <div>
+          <Text strong>数据落盘位置</Text>
+          <Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
+            默认在 ~/sprixin-iotcloud；可指定磁盘挂载点（需先在「磁盘预览」扫描该节点）
+          </Text>
+          <Space direction="vertical" size={8} style={{ width: '100%', marginTop: 8 }}>
+            {statefulPlacements.map((p) => {
+              const node = nodes.find((n) => n.id === p.nodeId)
+              const mps = mountpointsOf(p.nodeId)
+              const options = [
+                { value: '', label: '默认（~/sprixin-iotcloud）' },
+                ...mps.map((m) => ({
+                  value: dataPathFor(m.mp, p.instanceId),
+                  label: `${m.mp}${m.used != null ? ` · 已用 ${m.used}%` : ''}`
+                }))
+              ]
+              return (
+                <Space key={p.instanceId}>
+                  <Tag color="blue">{p.instanceId}</Tag>
+                  <Text type="secondary">{hostnames[p.nodeId] || node?.ip}</Text>
+                  <Select
+                    style={{ width: 380 }}
+                    value={p.dataPath ?? ''}
+                    options={options}
+                    onChange={(v) => setPlacementDataPath(p.instanceId, v || undefined)}
+                  />
+                </Space>
+              )
+            })}
+          </Space>
+        </div>
+      )}
+
       <Space>
         <Button icon={<EyeOutlined />} onClick={genPreview} disabled={placements.length === 0}>
           生成配置预览
@@ -144,32 +200,9 @@ export default function Step6Services() {
         run={(runId) => ipc.step6Deploy(runId, nodes, { placements })}
       />
 
-      <Divider />
-      <UninstallSection />
-    </Space>
-  )
-}
-
-function UninstallSection() {
-  const { nodes, placements } = useWizard()
-  const [deleteData, setDeleteData] = useState(false)
-  return (
-    <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-      <Text strong>一键卸载</Text>
-      <Text type="secondary">
-        按当前放置倒序停止服务（应用层先停）。默认保留数据卷；勾选删除数据卷为危险操作，需输入确认词。
+      <Text type="secondary" style={{ fontSize: 12 }}>
+        提示：卸载服务请到顶部「运维总览」使用一键全卸载。
       </Text>
-      <Checkbox checked={deleteData} onChange={(e) => setDeleteData(e.target.checked)}>
-        <Text type={deleteData ? 'danger' : undefined}>同时删除数据卷（不可恢复）</Text>
-      </Checkbox>
-      <StepRunner
-        runKey="uninstall"
-        nodes={nodes.filter((n) => placements.some((p) => p.nodeId === n.id))}
-        actionLabel="卸载服务"
-        disabled={placements.length === 0}
-        buildPlan={() => ipc.uninstallPlan({ placements, deleteData }, nodes)}
-        run={(runId) => ipc.uninstallRun(runId, nodes, { placements, deleteData })}
-      />
     </Space>
   )
 }
