@@ -40,6 +40,13 @@ const api = {
   saveProject: (project: ClusterProject): Promise<SaveResult> =>
     ipcRenderer.invoke('project:save', project),
 
+  // 节点配置导入导出
+  exportNodes: (nodes: NodeConfig[], passphrase: string): Promise<string | null> =>
+    ipcRenderer.invoke('nodes:export', nodes, passphrase),
+  importNodesPick: (): Promise<string | null> => ipcRenderer.invoke('nodes:importPick'),
+  importNodesDecrypt: (path: string, passphrase: string): Promise<NodeConfig[]> =>
+    ipcRenderer.invoke('nodes:importDecrypt', path, passphrase),
+
   // 运行事件订阅（日志/状态/进度）
   onRunEvent: (cb: (e: RunEvent) => void): (() => void) => {
     const listener = (_: unknown, e: RunEvent): void => cb(e)

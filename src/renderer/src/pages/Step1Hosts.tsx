@@ -1,7 +1,15 @@
 // 步骤1：主机配置 + 连接检测（设计文档 §7 步骤1）。
 
-import { App, Button, Input, InputNumber, Space, Table, Tag, Tooltip, Typography } from 'antd'
-import { DeleteOutlined, PlusOutlined, SaveOutlined, ThunderboltOutlined } from '@ant-design/icons'
+import { useState } from 'react'
+import { App, Button, Input, InputNumber, Modal, Space, Table, Tag, Tooltip, Typography } from 'antd'
+import {
+  DeleteOutlined,
+  DownloadOutlined,
+  PlusOutlined,
+  SaveOutlined,
+  ThunderboltOutlined,
+  UploadOutlined
+} from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { useWizard } from '../store/wizard'
 import { ipc } from '../ipc/client'
@@ -44,8 +52,41 @@ function ProbeCell({ probe, loading }: { probe?: NodeProbe; loading?: boolean })
 
 export default function Step1Hosts() {
   const { message } = App.useApp()
-  const { nodes, probes, probing, addNode, removeNode, updateNode, setProbe, setProbing } =
+  const { nodes, probes, probing, addNode, removeNode, updateNode, setProbe, setProbing, setNodes } =
     useWizard()
+
+  // 导入导出口令弹窗
+  const [io, setIo] = useState<{ mode: 'export' | 'import'; path?: string } | null>(null)
+  const [pass, setPass] = useState('')
+
+  async function startImport() {
+    const path = await ipc.importNodesPick()
+    if (!path) return
+    setPass('')
+    setIo({ mode: 'import', path })
+  }
+
+  async function confirmIo() {
+    if (!io) return
+    if (!pass) {
+      message.warning('请输入口令')
+      return
+    }
+    try {
+      if (io.mode === 'export') {
+        const p = await ipc.exportNodes(nodes, pass)
+        if (p) message.success(`已导出到 ${p}`)
+      } else if (io.path) {
+        const imported = await ipc.importNodesDecrypt(io.path, pass)
+        setNodes(imported)
+        message.success(`已导入 ${imported.length} 台主机`)
+      }
+      setIo(null)
+      setPass('')
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : String(e))
+    }
+  }
 
   async function save(silent = false) {
     const project = useWizard.getState().toProject()
@@ -179,6 +220,18 @@ export default function Step1Hosts() {
         <Button icon={<SaveOutlined />} onClick={() => save()}>
           保存配置
         </Button>
+        <Button
+          icon={<DownloadOutlined />}
+          onClick={() => {
+            setPass('')
+            setIo({ mode: 'export' })
+          }}
+        >
+          导出配置
+        </Button>
+        <Button icon={<UploadOutlined />} onClick={startImport}>
+          导入配置
+        </Button>
       </Space>
       <Table
         rowKey="id"
@@ -187,6 +240,30 @@ export default function Step1Hosts() {
         columns={columns}
         dataSource={nodes}
       />
+
+      <Modal
+        open={!!io}
+        title={io?.mode === 'export' ? '导出节点配置' : '导入节点配置'}
+        okText={io?.mode === 'export' ? '导出' : '导入'}
+        cancelText="取消"
+        onOk={confirmIo}
+        onCancel={() => setIo(null)}
+        destroyOnClose
+      >
+        <Text type="secondary">
+          {io?.mode === 'export'
+            ? '设置一个口令用于加密密码字段。导入时需输入同一口令解密。'
+            : '输入导出时设置的口令以解密密码。'}
+        </Text>
+        <Input.Password
+          autoFocus
+          style={{ marginTop: 12 }}
+          placeholder="口令"
+          value={pass}
+          onChange={(e) => setPass(e.target.value)}
+          onPressEnter={confirmIo}
+        />
+      </Modal>
     </Space>
   )
 }

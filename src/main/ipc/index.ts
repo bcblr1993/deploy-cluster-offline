@@ -14,6 +14,7 @@ import { listPackages, registerPackage } from '../package/PackageManager'
 import { registerAdapter } from '../os/OsAdapter'
 import { DebianAdapter } from '../os/DebianAdapter'
 import { loadProject, saveProject } from '../store/ConfigStore'
+import { exportNodes, importDecrypt, importPick } from '../store/NodeIO'
 import type {
   AppInfo,
   ClusterProject,
@@ -49,6 +50,15 @@ export function registerIpc(): void {
   ipcMain.handle('project:load', () => loadProject())
 
   ipcMain.handle('project:save', (_e, project: ClusterProject) => saveProject(project))
+
+  // ── 节点配置导入导出（docs/05） ──
+  ipcMain.handle('nodes:export', (_e, nodes: NodeConfig[], passphrase: string) =>
+    exportNodes(nodes, passphrase)
+  )
+  ipcMain.handle('nodes:importPick', () => importPick())
+  ipcMain.handle('nodes:importDecrypt', (_e, path: string, passphrase: string) =>
+    importDecrypt(path, passphrase)
+  )
 
   // ── 步骤2：主机名 & hosts ──
   ipcMain.handle('step2:read', (_e, nodes: NodeConfig[]) => readStep2(nodes))
