@@ -54,10 +54,12 @@ function recommendMp(service: ServiceId, mps: MountInfo[]): string | undefined {
 const CUSTOM = '__custom__'
 
 export default function Step6Services() {
-  const { nodes, hostnames, placements, togglePlacement, disks, setPlacementDataPath } = useWizard()
+  const { nodes, hostnames, placements, togglePlacement, disks, setPlacementDataPath, setView } =
+    useWizard()
   const [catalog, setCatalog] = useState<Record<ServiceId, ServiceMeta> | null>(null)
   const [preview, setPreview] = useState<DeploymentPreview | null>(null)
   const [customIds, setCustomIds] = useState<Record<string, boolean>>({})
+  const [deployed, setDeployed] = useState(false)
 
   // 该节点可用挂载点（来自步骤4 扫描），带磁盘类型/容量
   const mountpointsOf = (nodeId: string): MountInfo[] => {
@@ -280,7 +282,22 @@ export default function Step6Services() {
         disabled={placements.length === 0}
         buildPlan={() => ipc.step6Plan(placements, nodes)}
         run={(runId) => ipc.step6Deploy(runId, nodes, { placements })}
+        onDone={(results) => setDeployed(results.every((r) => r.status === 'success'))}
       />
+
+      {deployed && (
+        <Alert
+          type="success"
+          showIcon
+          message="部署完成"
+          description="可进入「运维总览」查看各节点服务运行状态。"
+          action={
+            <Button type="primary" onClick={() => setView('overview')}>
+              进入运维总览
+            </Button>
+          }
+        />
+      )}
 
       <Text type="secondary" style={{ fontSize: 12 }}>
         提示：卸载服务请到顶部「运维总览」使用一键全卸载。

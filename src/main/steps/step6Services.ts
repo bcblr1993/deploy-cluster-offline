@@ -92,6 +92,21 @@ export async function deployStep6(
   const baseOf = (nodeId: string): string => `${homeByNode[nodeId]}/sprixin-iotcloud`
   const dirOf = (nodeId: string, service: string): string => `${baseOf(nodeId)}/services/${service}`
 
+  // 粗粒度进度：每节点 = 写配置(实例数) + 载镜像(服务数) + 起服务(实例数)
+  const total: Record<string, number> = {}
+  const doneCnt: Record<string, number> = {}
+  for (const nodeId of involved) {
+    const insts = instOnNode(nodeId)
+    const svcCount = new Set(insts.map((i) => i.service)).size
+    total[nodeId] = insts.length * 2 + svcCount
+    doneCnt[nodeId] = 0
+  }
+  const tick = (nodeId: string): void => {
+    doneCnt[nodeId] = (doneCnt[nodeId] ?? 0) + 1
+    const pct = total[nodeId] ? Math.min(100, Math.round((doneCnt[nodeId] / total[nodeId]) * 100)) : 0
+    emitRunEvent({ runId, nodeId, kind: 'progress', percent: pct })
+  }
+
   try {
     // ── Phase 1: 最小覆盖 + 创建数据目录(chmod 777) ──
     // 整包已在步骤5 解压到 ~/sprixin-iotcloud（含原始 compose/conf）。
@@ -126,6 +141,7 @@ export async function deployStep6(
         if (!overlayCompose && inst.service !== 'iotcloud') {
           await emitLog(runId, nodeId, `[${inst.service}] 使用原包 compose（未改动）`)
         }
+        tick(nodeId)
       }
     }
 
@@ -138,16 +154,21 @@ export async function deployStep6(
       const services = [...new Set(instOnNode(nodeId).map((i) => i.service))]
       for (const svc of services) {
         const prefix = meta(svc).imageTarPrefix
-        if (!prefix) continue
+        if (!prefix) {
+          tick(nodeId)
+          continue
+        }
         const tar = await findImageTar(arch, prefix)
         if (!tar) {
           await emitLog(runId, nodeId, `[${svc}] ⚠ 包内未找到镜像 tar(${prefix})，跳过`)
+          tick(nodeId)
           continue
         }
         await emitLog(runId, nodeId, `[${svc}] docker load ${tar}`)
         await client.execSudo(`docker load -i '${baseOf(nodeId)}/images/${tar}'`, {
           timeoutMs: 300000
         })
+        tick(nodeId)
       }
     }
 
@@ -174,6 +195,7 @@ export async function deployStep6(
             timeoutMs: 180000
           })
         }
+        tick(inst.nodeId)
       }
     }
 

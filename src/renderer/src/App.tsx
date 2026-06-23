@@ -10,9 +10,8 @@ import Step4Disk from './pages/Step4Disk'
 import Step5Docker from './pages/Step5Docker'
 import Step6Services from './pages/Step6Services'
 import Overview from './pages/Overview'
+import type { ViewMode } from './store/wizard'
 import type { AppInfo } from '@shared/types'
-
-type ViewMode = 'wizard' | 'overview'
 
 const { Header, Content, Footer } = Layout
 const { Text } = Typography
@@ -46,9 +45,9 @@ function StepBody({ step }: { step: number }) {
 }
 
 export default function App() {
-  const { step, setStep, hydrate, canLeaveStep1, canLeaveStep5, applyRunEvent, busy } = useWizard()
+  const { step, setStep, hydrate, canLeaveStep1, canLeaveStep5, applyRunEvent, busy, view, setView } =
+    useWizard()
   const [info, setInfo] = useState<AppInfo | null>(null)
-  const [view, setView] = useState<ViewMode>('wizard')
   const { token } = theme.useToken()
 
   useEffect(() => {

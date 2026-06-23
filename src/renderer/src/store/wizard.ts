@@ -13,6 +13,8 @@ import type {
   TaskStatus
 } from '@shared/types'
 
+export type ViewMode = 'wizard' | 'overview'
+
 /** 一次步骤运行的全局状态（提升到 store，切换步骤不丢） */
 export interface RunState {
   runId: string
@@ -58,8 +60,11 @@ interface WizardState {
   runs: Record<string, RunState>
   /** 全局锁：任一步骤执行中为 true，期间禁止导航 */
   busy: boolean
+  /** 顶部视图：部署向导 / 运维总览 */
+  view: ViewMode
 
   setStep: (step: number) => void
+  setView: (view: ViewMode) => void
   addNode: () => void
   removeNode: (id: string) => void
   /** 整体替换节点列表（导入用），并清空探测/主机名 */
@@ -102,8 +107,10 @@ export const useWizard = create<WizardState>((set, get) => ({
   disks: {},
   runs: {},
   busy: false,
+  view: 'wizard',
 
   setStep: (step) => set({ step }),
+  setView: (view) => set({ view }),
   addNode: () => set((s) => ({ nodes: [...s.nodes, newNode()] })),
   removeNode: (id) => set((s) => ({ nodes: s.nodes.filter((n) => n.id !== id) })),
   setNodes: (nodes) => set({ nodes, probes: {}, probing: {}, hostnames: {} }),
