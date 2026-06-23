@@ -46,7 +46,7 @@ function StepBody({ step }: { step: number }) {
 }
 
 export default function App() {
-  const { step, setStep, hydrate, canLeaveStep1, applyRunEvent, busy } = useWizard()
+  const { step, setStep, hydrate, canLeaveStep1, canLeaveStep5, applyRunEvent, busy } = useWizard()
   const [info, setInfo] = useState<AppInfo | null>(null)
   const [view, setView] = useState<ViewMode>('wizard')
   const { token } = theme.useToken()
@@ -59,8 +59,10 @@ export default function App() {
     return off
   }, [hydrate, applyRunEvent])
 
-  // 步骤门禁：步骤1 未全部检测通过时，禁止进入后续步骤
+  // 步骤门禁：步骤1 未全部检测通过 / 步骤5 未登记覆盖架构的安装包时，禁止进入下一步
   const blockedByStep1 = step === 0 && !canLeaveStep1()
+  const blockedByStep5 = step === 4 && !canLeaveStep5()
+  const blockedNext = blockedByStep1 || blockedByStep5
 
   return (
     <Layout style={{ height: '100vh' }}>
@@ -152,9 +154,14 @@ export default function App() {
                   需所有主机检测「可用」后才能继续
                 </Text>
               )}
+              {!busy && blockedByStep5 && (
+                <Text type="warning" style={{ fontSize: 12 }}>
+                  需登记覆盖所有节点架构的安装包后才能继续
+                </Text>
+              )}
               <Button
                 type="primary"
-                disabled={step === STEPS.length - 1 || blockedByStep1 || busy}
+                disabled={step === STEPS.length - 1 || blockedNext || busy}
                 onClick={() => setStep(step + 1)}
               >
                 下一步 <RightOutlined />

@@ -13,14 +13,14 @@ const { Text } = Typography
 
 export default function Step5Docker() {
   const { message } = App.useApp()
-  const { nodes } = useWizard()
-  const [packages, setPackages] = useState<InstallerPackage[]>([])
+  const { nodes, probes, packages, setPackages } = useWizard()
   const [mode, setMode] = useState<Step5Params['mode']>('reuse')
   const [registering, setRegistering] = useState(false)
   const [docker, setDocker] = useState<Record<string, NodeDockerInfo>>({})
   const [probing, setProbing] = useState(false)
 
   const pkgVersion = packages.find((p) => p.dockerVersion)?.dockerVersion
+  const pkgArchs = new Set(packages.map((p) => p.arch))
 
   const probe = useCallback(async () => {
     setProbing(true)
@@ -34,7 +34,7 @@ export default function Step5Docker() {
   useEffect(() => {
     ipc.listPackages().then(setPackages).catch(() => undefined)
     probe()
-  }, [probe])
+  }, [probe, setPackages])
 
   async function pickAndRegister() {
     const path = await ipc.pickInstaller()
@@ -53,14 +53,36 @@ export default function Step5Docker() {
 
   const params: Step5Params = { mode }
   const hasPackage = packages.length > 0
+  // 是否有节点架构缺对应安装包
+  const missingArchs = [
+    ...new Set(
+      nodes
+        .map((n) => probes[n.id]?.arch)
+        .filter((a): a is 'x86_64' | 'aarch64' => a === 'x86_64' || a === 'aarch64')
+        .filter((a) => !pkgArchs.has(a))
+    )
+  ]
 
   const dockerCols: ColumnsType<NodeConfig> = [
     {
       title: '节点',
-      width: 180,
+      width: 160,
       render: (_, n) => (
         <Text style={{ fontFamily: 'monospace' }}>{n.ip}</Text>
       )
+    },
+    {
+      title: '架构',
+      width: 120,
+      render: (_, n) => {
+        const a = probes[n.id]?.arch
+        if (!a || a === 'unknown') return <Tag>未知</Tag>
+        return pkgArchs.has(a) ? (
+          <Tag>{a}</Tag>
+        ) : (
+          <Tag color="error">{a} · 缺安装包</Tag>
+        )
+      }
     },
     {
       title: '当前 Docker',
@@ -107,6 +129,14 @@ export default function Step5Docker() {
         ))}
         {!hasPackage && <Text type="warning">尚未登记安装包</Text>}
       </Space>
+
+      {hasPackage && missingArchs.length > 0 && (
+        <Alert
+          type="warning"
+          showIcon
+          message={`存在 ${missingArchs.join('、')} 架构的节点但未登记对应安装包，请再登记一个该架构的安装包`}
+        />
+      )}
 
       <div>
         <Space style={{ marginBottom: 8 }}>

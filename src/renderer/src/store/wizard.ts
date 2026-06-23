@@ -62,6 +62,8 @@ interface WizardState {
   setStep: (step: number) => void
   addNode: () => void
   removeNode: (id: string) => void
+  /** 整体替换节点列表（导入用），并清空探测/主机名 */
+  setNodes: (nodes: NodeConfig[]) => void
   updateNode: (id: string, patch: Partial<NodeConfig>) => void
   setProbe: (id: string, probe: NodeProbe) => void
   setProbing: (id: string, v: boolean) => void
@@ -83,6 +85,9 @@ interface WizardState {
   toProject: () => ClusterProject
   /** 步骤1 是否可放行：至少一台、全部已探测且 supported */
   canLeaveStep1: () => boolean
+  setPackages: (pkgs: InstallerPackage[]) => void
+  /** 步骤5 是否可放行：已登记覆盖所有节点架构的安装包 */
+  canLeaveStep5: () => boolean
 }
 
 export const useWizard = create<WizardState>((set, get) => ({
@@ -101,6 +106,7 @@ export const useWizard = create<WizardState>((set, get) => ({
   setStep: (step) => set({ step }),
   addNode: () => set((s) => ({ nodes: [...s.nodes, newNode()] })),
   removeNode: (id) => set((s) => ({ nodes: s.nodes.filter((n) => n.id !== id) })),
+  setNodes: (nodes) => set({ nodes, probes: {}, probing: {}, hostnames: {} }),
   updateNode: (id, patch) =>
     set((s) => ({
       nodes: s.nodes.map((n) => (n.id === id ? { ...n, ...patch } : n))
@@ -221,5 +227,19 @@ export const useWizard = create<WizardState>((set, get) => ({
     const s = get()
     if (s.nodes.length === 0) return false
     return s.nodes.every((n) => n.ip && s.probes[n.id]?.supported === true)
+  },
+
+  setPackages: (pkgs) => set({ packages: pkgs }),
+
+  canLeaveStep5: () => {
+    const s = get()
+    if (s.packages.length === 0) return false
+    const archs = new Set(s.packages.map((p) => p.arch))
+    // 每个节点的架构都要有对应安装包（未探测/未知不阻断，step1 已拦不支持的）
+    return s.nodes.every((n) => {
+      const a = s.probes[n.id]?.arch
+      if (!a || a === 'unknown') return true
+      return archs.has(a)
+    })
   }
 }))
