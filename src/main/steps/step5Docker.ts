@@ -49,12 +49,19 @@ systemctl restart docker
 }
 
 const forceCleanScript = `
-systemctl stop docker 2>/dev/null || true
-systemctl disable docker 2>/dev/null || true
-rm -f /usr/bin/docker /usr/bin/dockerd /usr/bin/docker-compose /usr/bin/containerd /usr/bin/containerd-shim-runc-v2 /usr/bin/runc /usr/bin/ctr /usr/bin/docker-proxy /usr/bin/docker-init
-rm -f /etc/systemd/system/docker.service
-rm -rf /root/.docker
-systemctl daemon-reload || true
+systemctl stop docker docker.socket containerd 2>/dev/null || true
+systemctl disable docker docker.socket containerd 2>/dev/null || true
+if command -v apt-get >/dev/null 2>&1; then
+  DEBIAN_FRONTEND=noninteractive apt-get purge -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin docker.io docker-doc docker-compose podman-docker containerd runc 2>/dev/null || true
+fi
+rm -f /etc/systemd/system/docker.service /etc/systemd/system/docker.socket
+rm -f /lib/systemd/system/docker.service /lib/systemd/system/docker.socket
+rm -f /usr/lib/systemd/system/docker.service /usr/lib/systemd/system/docker.socket
+rm -f /etc/systemd/system/multi-user.target.wants/docker.service /etc/systemd/system/sockets.target.wants/docker.socket
+rm -f /usr/bin/docker /usr/bin/dockerd /usr/bin/docker-compose /usr/bin/containerd /usr/bin/containerd-shim-runc-v2 /usr/bin/runc /usr/bin/ctr /usr/bin/docker-proxy /usr/bin/docker-init /usr/local/bin/docker-compose
+rm -rf /etc/docker /root/.docker /var/lib/docker /var/lib/containerd /run/docker.sock
+systemctl daemon-reload 2>/dev/null || true
+systemctl reset-failed 2>/dev/null || true
 `
 
 export async function runStep5(
