@@ -11,6 +11,7 @@ import type {
   InstallerPackage,
   NodeConfig,
   NodeProbe,
+  NodeStatus,
   NodeTaskResult,
   RunEvent,
   SaveResult,
@@ -23,7 +24,8 @@ import type {
   Step5Params,
   Step6Params,
   TimePlan,
-  UninstallParams
+  UninstallParams,
+  UninstallAllParams
 } from '@shared/types'
 
 const RUN_EVENT_CHANNEL = 'run:event'
@@ -100,7 +102,20 @@ const api = {
     runId: string,
     nodes: NodeConfig[],
     params: UninstallParams
-  ): Promise<NodeTaskResult[]> => ipcRenderer.invoke('uninstall:run', runId, nodes, params)
+  ): Promise<NodeTaskResult[]> => ipcRenderer.invoke('uninstall:run', runId, nodes, params),
+
+  // 运维总览
+  overviewStatus: (nodes: NodeConfig[]): Promise<Record<string, NodeStatus>> =>
+    ipcRenderer.invoke('overview:status', nodes),
+  overviewPlanUninstallAll: (
+    nodes: NodeConfig[],
+    params: UninstallAllParams
+  ): Promise<ActionPlan> => ipcRenderer.invoke('overview:planUninstallAll', nodes, params),
+  overviewUninstallAll: (
+    runId: string,
+    nodes: NodeConfig[],
+    params: UninstallAllParams
+  ): Promise<NodeTaskResult[]> => ipcRenderer.invoke('overview:uninstallAll', runId, nodes, params)
 }
 
 export type DeployApi = typeof api

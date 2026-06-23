@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Button, Layout, Space, Steps, Typography, theme } from 'antd'
-import { LeftOutlined, RightOutlined } from '@ant-design/icons'
+import { Button, Layout, Segmented, Space, Steps, Typography, theme } from 'antd'
+import { DashboardOutlined, LeftOutlined, RightOutlined, RocketOutlined } from '@ant-design/icons'
 import { useWizard } from './store/wizard'
 import { ipc } from './ipc/client'
 import Step1Hosts from './pages/Step1Hosts'
@@ -9,7 +9,10 @@ import Step3Time from './pages/Step3Time'
 import Step4Disk from './pages/Step4Disk'
 import Step5Docker from './pages/Step5Docker'
 import Step6Services from './pages/Step6Services'
+import Overview from './pages/Overview'
 import type { AppInfo } from '@shared/types'
+
+type ViewMode = 'wizard' | 'overview'
 
 const { Header, Content, Footer } = Layout
 const { Text } = Typography
@@ -45,6 +48,7 @@ function StepBody({ step }: { step: number }) {
 export default function App() {
   const { step, setStep, hydrate, canLeaveStep1, applyRunEvent, busy } = useWizard()
   const [info, setInfo] = useState<AppInfo | null>(null)
+  const [view, setView] = useState<ViewMode>('wizard')
   const { token } = theme.useToken()
 
   useEffect(() => {
@@ -70,9 +74,20 @@ export default function App() {
           paddingInline: 24
         }}
       >
-        <Text strong style={{ fontSize: 16 }}>
-          离线集群部署工具
-        </Text>
+        <Space size="large">
+          <Text strong style={{ fontSize: 16 }}>
+            离线集群部署工具
+          </Text>
+          <Segmented
+            value={view}
+            onChange={(v) => !busy && setView(v as ViewMode)}
+            options={[
+              { label: '部署向导', value: 'wizard', icon: <RocketOutlined /> },
+              { label: '运维总览', value: 'overview', icon: <DashboardOutlined /> }
+            ]}
+            disabled={busy}
+          />
+        </Space>
         {info && (
           <Text type="secondary" style={{ fontSize: 12 }}>
             v{info.appVersion} · Electron {info.electronVersion} · {info.platform}
@@ -80,66 +95,74 @@ export default function App() {
         )}
       </Header>
 
-      <Content style={{ padding: 24, overflow: 'auto' }}>
-        <Steps
-          current={step}
-          onChange={busy ? undefined : setStep}
-          items={STEPS.map((s) => ({
-            title: s.title,
-            description: s.desc,
-            disabled: busy
-          }))}
-          style={{ marginBottom: 24 }}
-        />
-        <div
-          style={{
-            background: token.colorBgContainer,
-            border: `1px solid ${token.colorBorderSecondary}`,
-            borderRadius: token.borderRadiusLG,
-            padding: 24,
-            minHeight: 360
-          }}
-        >
-          <StepBody step={step} />
-        </div>
-      </Content>
+      {view === 'overview' ? (
+        <Content style={{ padding: 24, overflow: 'auto' }}>
+          <Overview />
+        </Content>
+      ) : (
+        <>
+          <Content style={{ padding: 24, overflow: 'auto' }}>
+            <Steps
+              current={step}
+              onChange={busy ? undefined : setStep}
+              items={STEPS.map((s) => ({
+                title: s.title,
+                description: s.desc,
+                disabled: busy
+              }))}
+              style={{ marginBottom: 24 }}
+            />
+            <div
+              style={{
+                background: token.colorBgContainer,
+                border: `1px solid ${token.colorBorderSecondary}`,
+                borderRadius: token.borderRadiusLG,
+                padding: 24,
+                minHeight: 360
+              }}
+            >
+              <StepBody step={step} />
+            </div>
+          </Content>
 
-      <Footer
-        style={{
-          background: token.colorBgContainer,
-          borderTop: `1px solid ${token.colorBorderSecondary}`,
-          display: 'flex',
-          justifyContent: 'space-between',
-          paddingBlock: 12
-        }}
-      >
-        <Button
-          icon={<LeftOutlined />}
-          disabled={step === 0 || busy}
-          onClick={() => setStep(step - 1)}
-        >
-          上一步
-        </Button>
-        <Space>
-          {busy && (
-            <Text type="warning" style={{ fontSize: 12 }}>
-              正在执行操作，导航已锁定…
-            </Text>
-          )}
-          {!busy && blockedByStep1 && (
-            <Text type="warning" style={{ fontSize: 12 }}>
-              需所有主机检测「可用」后才能继续
-            </Text>
-          )}
-          <Button
-            type="primary"
-            disabled={step === STEPS.length - 1 || blockedByStep1 || busy}
-            onClick={() => setStep(step + 1)}
+          <Footer
+            style={{
+              background: token.colorBgContainer,
+              borderTop: `1px solid ${token.colorBorderSecondary}`,
+              display: 'flex',
+              justifyContent: 'space-between',
+              paddingBlock: 12
+            }}
           >
-            下一步 <RightOutlined />
-          </Button>
-        </Space>
-      </Footer>
+            <Button
+              icon={<LeftOutlined />}
+              disabled={step === 0 || busy}
+              onClick={() => setStep(step - 1)}
+            >
+              上一步
+            </Button>
+            <Space>
+              {busy && (
+                <Text type="warning" style={{ fontSize: 12 }}>
+                  正在执行操作，导航已锁定…
+                </Text>
+              )}
+              {!busy && blockedByStep1 && (
+                <Text type="warning" style={{ fontSize: 12 }}>
+                  需所有主机检测「可用」后才能继续
+                </Text>
+              )}
+              <Button
+                type="primary"
+                disabled={step === STEPS.length - 1 || blockedByStep1 || busy}
+                onClick={() => setStep(step + 1)}
+              >
+                下一步 <RightOutlined />
+              </Button>
+            </Space>
+          </Footer>
+        </>
+      )}
     </Layout>
   )
 }

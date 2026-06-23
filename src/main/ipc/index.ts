@@ -8,6 +8,7 @@ import { probeDisks } from '../steps/step4Disk'
 import { planStep5, runStep5 } from '../steps/step5Docker'
 import { deployStep6, planStep6, previewStep6 } from '../steps/step6Services'
 import { planUninstall, runUninstall } from '../steps/uninstall'
+import { planUninstallAll, probeOverview, uninstallAll } from '../steps/overview'
 import { CATALOG } from '../services/catalog'
 import { listPackages, registerPackage } from '../package/PackageManager'
 import { registerAdapter } from '../os/OsAdapter'
@@ -24,7 +25,8 @@ import type {
   Step6Params,
   ServicePlacement,
   TimePlan,
-  UninstallParams
+  UninstallParams,
+  UninstallAllParams
 } from '@shared/types'
 
 export function registerIpc(): void {
@@ -130,5 +132,16 @@ export function registerIpc(): void {
     'uninstall:run',
     (_e, runId: string, nodes: NodeConfig[], params: UninstallParams) =>
       runUninstall(runId, nodes, params)
+  )
+
+  // ── 运维总览（docs/01-…） ──
+  ipcMain.handle('overview:status', (_e, nodes: NodeConfig[]) => probeOverview(nodes))
+  ipcMain.handle('overview:planUninstallAll', (_e, nodes: NodeConfig[], params: UninstallAllParams) =>
+    planUninstallAll(nodes, params)
+  )
+  ipcMain.handle(
+    'overview:uninstallAll',
+    (_e, runId: string, nodes: NodeConfig[], params: UninstallAllParams) =>
+      uninstallAll(runId, nodes, params)
   )
 }
