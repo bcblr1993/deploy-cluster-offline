@@ -5,7 +5,9 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type {
   ActionPlan,
   AppInfo,
+  Cluster,
   ClusterProject,
+  ClusterSummary,
   DeploymentPreview,
   DiskInfo,
   InstallerPackage,
@@ -39,6 +41,17 @@ const api = {
   loadProject: (): Promise<ClusterProject | null> => ipcRenderer.invoke('project:load'),
   saveProject: (project: ClusterProject): Promise<SaveResult> =>
     ipcRenderer.invoke('project:save', project),
+
+  // 多集群
+  clustersList: (): Promise<ClusterSummary[]> => ipcRenderer.invoke('clusters:list'),
+  clusterCreate: (name: string, remark?: string): Promise<Cluster> =>
+    ipcRenderer.invoke('clusters:create', name, remark),
+  clusterRename: (id: string, name: string, remark?: string): Promise<void> =>
+    ipcRenderer.invoke('clusters:rename', id, name, remark),
+  clusterDelete: (id: string): Promise<void> => ipcRenderer.invoke('clusters:delete', id),
+  clusterLoad: (id: string): Promise<Cluster | null> => ipcRenderer.invoke('clusters:load', id),
+  clusterSave: (cluster: Cluster): Promise<SaveResult> =>
+    ipcRenderer.invoke('clusters:save', cluster),
 
   // 节点配置导入导出
   exportNodes: (nodes: NodeConfig[], passphrase: string): Promise<string | null> =>

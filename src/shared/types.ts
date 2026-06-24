@@ -98,6 +98,32 @@ export interface ClusterProject {
   stepState: Record<string, unknown>
 }
 
+// ───────── 多集群分组管理（设计 docs/06） ─────────
+
+export interface Cluster {
+  id: string
+  name: string
+  remark?: string
+  nodes: NodeConfig[]
+  packages: InstallerPackage[]
+  stepState: Record<string, unknown>
+  createdAt: string
+  updatedAt: string
+}
+
+/** 集群列表页用的轻量摘要 */
+export interface ClusterSummary {
+  id: string
+  name: string
+  remark?: string
+  nodeCount: number
+  /** 节点 IP 列表（用于跨集群同 IP 提醒） */
+  ips: string[]
+  /** 是否部署过（placements 非空） */
+  deployed: boolean
+  updatedAt: string
+}
+
 // ───────────────────────── IPC 契约 ─────────────────────────
 
 export interface AppInfo {

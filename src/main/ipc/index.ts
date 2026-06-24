@@ -13,10 +13,20 @@ import { CATALOG } from '../services/catalog'
 import { listPackages, registerPackage } from '../package/PackageManager'
 import { registerAdapter } from '../os/OsAdapter'
 import { DebianAdapter } from '../os/DebianAdapter'
-import { loadProject, saveProject } from '../store/ConfigStore'
+import {
+  createCluster,
+  deleteCluster,
+  listClusters,
+  loadCluster,
+  loadProject,
+  renameCluster,
+  saveCluster,
+  saveProject
+} from '../store/ConfigStore'
 import { exportNodes, importDecrypt, importPick } from '../store/NodeIO'
 import type {
   AppInfo,
+  Cluster,
   ClusterProject,
   DiskInfo,
   NodeConfig,
@@ -50,6 +60,18 @@ export function registerIpc(): void {
   ipcMain.handle('project:load', () => loadProject())
 
   ipcMain.handle('project:save', (_e, project: ClusterProject) => saveProject(project))
+
+  // ── 多集群（docs/06） ──
+  ipcMain.handle('clusters:list', () => listClusters())
+  ipcMain.handle('clusters:create', (_e, name: string, remark?: string) =>
+    createCluster(name, remark)
+  )
+  ipcMain.handle('clusters:rename', (_e, id: string, name: string, remark?: string) =>
+    renameCluster(id, name, remark)
+  )
+  ipcMain.handle('clusters:delete', (_e, id: string) => deleteCluster(id))
+  ipcMain.handle('clusters:load', (_e, id: string) => loadCluster(id))
+  ipcMain.handle('clusters:save', (_e, cluster: Cluster) => saveCluster(cluster))
 
   // ── 节点配置导入导出（docs/05） ──
   ipcMain.handle('nodes:export', (_e, nodes: NodeConfig[], passphrase: string) =>
