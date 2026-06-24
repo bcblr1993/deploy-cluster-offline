@@ -282,7 +282,11 @@ export default function Step6Services() {
         disabled={placements.length === 0}
         buildPlan={() => ipc.step6Plan(placements, nodes)}
         run={(runId) => ipc.step6Deploy(runId, nodes, { placements })}
-        onDone={(results) => setDeployed(results.every((r) => r.status === 'success'))}
+        onDone={(results) => {
+          setDeployed(results.every((r) => r.status === 'success'))
+          const c = useWizard.getState().toCluster()
+          if (c.id) void ipc.clusterSave(c)
+        }}
       />
 
       {deployed && (

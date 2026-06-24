@@ -1,6 +1,6 @@
 // 步骤1：主机配置 + 连接检测（设计文档 §7 步骤1）。
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { App, Button, Input, InputNumber, Modal, Space, Table, Tag, Tooltip, Typography } from 'antd'
 import {
   DeleteOutlined,
@@ -52,12 +52,38 @@ function ProbeCell({ probe, loading }: { probe?: NodeProbe; loading?: boolean })
 
 export default function Step1Hosts() {
   const { message } = App.useApp()
-  const { nodes, probes, probing, addNode, removeNode, updateNode, setProbe, setProbing, setNodes } =
-    useWizard()
+  const {
+    nodes,
+    probes,
+    probing,
+    clusterId,
+    addNode,
+    removeNode,
+    updateNode,
+    setProbe,
+    setProbing,
+    setNodes
+  } = useWizard()
 
   // 导入导出口令弹窗
   const [io, setIo] = useState<{ mode: 'export' | 'import'; path?: string } | null>(null)
   const [pass, setPass] = useState('')
+
+  // 跨集群同 IP 提醒：其它集群里出现过的 IP → 集群名列表（docs/06 §14-4）
+  const [otherIps, setOtherIps] = useState<Record<string, string[]>>({})
+  useEffect(() => {
+    ipc
+      .clustersList()
+      .then((list) => {
+        const m: Record<string, string[]> = {}
+        for (const c of list) {
+          if (c.id === clusterId) continue
+          for (const ip of c.ips) (m[ip] ??= []).push(c.name)
+        }
+        setOtherIps(m)
+      })
+      .catch(() => undefined)
+  }, [clusterId])
 
   async function startImport() {
     const path = await ipc.importNodesPick()
@@ -89,8 +115,9 @@ export default function Step1Hosts() {
   }
 
   async function save(silent = false) {
-    const project = useWizard.getState().toProject()
-    const res = await ipc.saveProject(project)
+    const cluster = useWizard.getState().toCluster()
+    if (!cluster.id) return
+    const res = await ipc.clusterSave(cluster)
     if (!silent) {
       if (res.encryptionAvailable) message.success('配置已保存（密码已加密）')
       else message.warning('配置已保存，但系统钥匙串不可用，密码仅做了 base64 混淆')
@@ -129,13 +156,22 @@ export default function Step1Hosts() {
     {
       title: 'IP 地址',
       dataIndex: 'ip',
-      width: 160,
+      width: 180,
       render: (_, r) => (
-        <Input
-          placeholder="10.0.0.11"
-          value={r.ip}
-          onChange={(e) => updateNode(r.id, { ip: e.target.value.trim() })}
-        />
+        <Space direction="vertical" size={2} style={{ width: '100%' }}>
+          <Input
+            placeholder="10.0.0.11"
+            value={r.ip}
+            onChange={(e) => updateNode(r.id, { ip: e.target.value.trim() })}
+          />
+          {r.ip && otherIps[r.ip] && (
+            <Tooltip title={`该 IP 也在：${otherIps[r.ip].join('、')}`}>
+              <Tag color="orange" style={{ fontSize: 11 }}>
+                也在其它集群
+              </Tag>
+            </Tooltip>
+          )}
+        </Space>
       )
     },
     {

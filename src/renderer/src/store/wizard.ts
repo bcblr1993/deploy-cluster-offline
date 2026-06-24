@@ -2,6 +2,7 @@
 
 import { create } from 'zustand'
 import type {
+  Cluster,
   ClusterProject,
   DiskInfo,
   InstallerPackage,
@@ -60,11 +61,25 @@ interface WizardState {
   runs: Record<string, RunState>
   /** 全局锁：任一步骤执行中为 true，期间禁止导航 */
   busy: boolean
-  /** 顶部视图：部署向导 / 运维总览 */
+  /** 顶层视图：集群列表 / 集群内 */
+  appView: 'clusters' | 'cluster'
+  /** 集群内视图：部署向导 / 运维总览 */
   view: ViewMode
+  /** 当前打开的集群 */
+  clusterId: string | null
+  clusterName: string
+  clusterRemark?: string
+  clusterCreatedAt?: string
 
   setStep: (step: number) => void
   setView: (view: ViewMode) => void
+  setAppView: (v: 'clusters' | 'cluster') => void
+  /** 打开集群：填充工作区状态，按是否部署过决定落到总览/向导 */
+  openCluster: (c: Cluster) => void
+  /** 返回集群列表（调用方负责先保存） */
+  closeCluster: () => void
+  /** 导出当前工作区为 Cluster（用于保存） */
+  toCluster: () => Cluster
   addNode: () => void
   removeNode: (id: string) => void
   /** 整体替换节点列表（导入用），并清空探测/主机名 */
@@ -107,10 +122,61 @@ export const useWizard = create<WizardState>((set, get) => ({
   disks: {},
   runs: {},
   busy: false,
+  appView: 'clusters',
   view: 'wizard',
+  clusterId: null,
+  clusterName: '',
 
   setStep: (step) => set({ step }),
   setView: (view) => set({ view }),
+  setAppView: (v) => set({ appView: v }),
+
+  openCluster: (c) => {
+    for (const n of c.nodes) {
+      const m = /^n(\d+)$/.exec(n.id)
+      if (m) seq = Math.max(seq, Number(m[1]) + 1)
+    }
+    const hostnames: Record<string, string> = {}
+    for (const n of c.nodes) if (n.hostname) hostnames[n.id] = n.hostname
+    const ss = (c.stepState ?? {}) as { step?: number; placements?: ServicePlacement[] }
+    const placements = ss.placements ?? []
+    set({
+      appView: 'cluster',
+      view: placements.length > 0 ? 'overview' : 'wizard',
+      clusterId: c.id,
+      clusterName: c.name,
+      clusterRemark: c.remark,
+      clusterCreatedAt: c.createdAt,
+      nodes: c.nodes.length ? c.nodes : [newNode()],
+      packages: c.packages ?? [],
+      hostnames,
+      placements,
+      step: ss.step ?? 0,
+      probes: {},
+      probing: {},
+      disks: {},
+      runs: {},
+      busy: false,
+      hydrated: true
+    })
+  },
+
+  closeCluster: () => set({ appView: 'clusters', clusterId: null, clusterName: '' }),
+
+  toCluster: () => {
+    const s = get()
+    const now = new Date().toISOString()
+    return {
+      id: s.clusterId ?? '',
+      name: s.clusterName,
+      remark: s.clusterRemark,
+      nodes: s.nodes.map((n) => ({ ...n, hostname: s.hostnames[n.id] ?? n.hostname })),
+      packages: s.packages,
+      stepState: { step: s.step, placements: s.placements },
+      createdAt: s.clusterCreatedAt ?? now,
+      updatedAt: now
+    }
+  },
   addNode: () => set((s) => ({ nodes: [...s.nodes, newNode()] })),
   removeNode: (id) => set((s) => ({ nodes: s.nodes.filter((n) => n.id !== id) })),
   setNodes: (nodes) => set({ nodes, probes: {}, probing: {}, hostnames: {} }),

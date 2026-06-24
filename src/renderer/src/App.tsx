@@ -1,6 +1,12 @@
 import { useEffect, useState } from 'react'
-import { Button, Layout, Segmented, Space, Steps, Typography, theme } from 'antd'
-import { DashboardOutlined, LeftOutlined, RightOutlined, RocketOutlined } from '@ant-design/icons'
+import { Button, Layout, Segmented, Space, Steps, Tag, Typography, theme } from 'antd'
+import {
+  ArrowLeftOutlined,
+  DashboardOutlined,
+  LeftOutlined,
+  RightOutlined,
+  RocketOutlined
+} from '@ant-design/icons'
 import { useWizard } from './store/wizard'
 import { ipc } from './ipc/client'
 import Step1Hosts from './pages/Step1Hosts'
@@ -10,6 +16,7 @@ import Step4Disk from './pages/Step4Disk'
 import Step5Docker from './pages/Step5Docker'
 import Step6Services from './pages/Step6Services'
 import Overview from './pages/Overview'
+import ClusterList from './pages/ClusterList'
 import type { ViewMode } from './store/wizard'
 import type { AppInfo } from '@shared/types'
 
@@ -45,20 +52,66 @@ function StepBody({ step }: { step: number }) {
 }
 
 export default function App() {
-  const { step, setStep, hydrate, canLeaveStep1, canLeaveStep5, applyRunEvent, busy, view, setView } =
-    useWizard()
+  const {
+    step,
+    setStep,
+    canLeaveStep1,
+    canLeaveStep5,
+    applyRunEvent,
+    busy,
+    appView,
+    view,
+    setView,
+    closeCluster,
+    clusterName
+  } = useWizard()
   const [info, setInfo] = useState<AppInfo | null>(null)
   const { token } = theme.useToken()
 
   useEffect(() => {
     ipc.getAppInfo().then(setInfo).catch(() => undefined)
-    ipc.loadProject().then(hydrate).catch(() => hydrate(null))
     // 全局订阅运行事件 → 落到 store（与页面挂载解耦，切换步骤不丢日志）
     const off = ipc.onRunEvent(applyRunEvent)
     return off
-  }, [hydrate, applyRunEvent])
+  }, [applyRunEvent])
 
-  // 步骤门禁：步骤1 未全部检测通过 / 步骤5 未登记覆盖架构的安装包时，禁止进入下一步
+  async function backToClusters() {
+    const c = useWizard.getState().toCluster()
+    if (c.id) await ipc.clusterSave(c)
+    closeCluster()
+  }
+
+  // 集群列表页：独立布局
+  if (appView === 'clusters') {
+    return (
+      <Layout style={{ minHeight: '100vh' }}>
+        <Header
+          style={{
+            background: token.colorBgContainer,
+            borderBottom: `1px solid ${token.colorBorderSecondary}`,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            paddingInline: 24
+          }}
+        >
+          <Text strong style={{ fontSize: 16 }}>
+            离线集群部署工具
+          </Text>
+          {info && (
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              v{info.appVersion} · Electron {info.electronVersion} · {info.platform}
+            </Text>
+          )}
+        </Header>
+        <Content style={{ padding: 24, overflow: 'auto' }}>
+          <ClusterList />
+        </Content>
+      </Layout>
+    )
+  }
+
+  // 步骤门禁
   const blockedByStep1 = step === 0 && !canLeaveStep1()
   const blockedByStep5 = step === 4 && !canLeaveStep5()
   const blockedNext = blockedByStep1 || blockedByStep5
@@ -76,9 +129,20 @@ export default function App() {
         }}
       >
         <Space size="large">
-          <Text strong style={{ fontSize: 16 }}>
-            离线集群部署工具
-          </Text>
+          <Button
+            type="text"
+            icon={<ArrowLeftOutlined />}
+            disabled={busy}
+            onClick={backToClusters}
+          >
+            集群列表
+          </Button>
+          <Space size={6}>
+            <Text strong style={{ fontSize: 16 }}>
+              {clusterName || '集群'}
+            </Text>
+            <Tag color="blue">当前集群</Tag>
+          </Space>
           <Segmented
             value={view}
             onChange={(v) => !busy && setView(v as ViewMode)}
