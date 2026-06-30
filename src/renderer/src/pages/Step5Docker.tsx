@@ -1,186 +1,175 @@
-// 步骤5：离线安装 Docker / docker-compose 页。
+// 步骤5：安装 Docker — 设计稿重绘（架构分组 + 按架构安装包槽 + 闸门）。
 
 import { useCallback, useEffect, useState } from 'react'
-import { Alert, App, Button, Radio, Space, Table, Tag, Typography } from 'antd'
-import { FileZipOutlined, ReloadOutlined } from '@ant-design/icons'
-import type { ColumnsType } from 'antd/es/table'
+import { App } from 'antd'
 import { useWizard } from '../store/wizard'
 import { ipc } from '../ipc/client'
 import StepRunner from '../components/StepRunner'
-import type { InstallerPackage, NodeConfig, NodeDockerInfo, Step5Params } from '@shared/types'
-
-const { Text } = Typography
+import { card, chip } from '../styles/cd'
+import type { Arch, InstallerPackage, NodeDockerInfo, Step5Params } from '@shared/types'
 
 export default function Step5Docker() {
   const { message } = App.useApp()
-  const { nodes, probes, packages, setPackages } = useWizard()
+  const { nodes, probes, packages, setPackages, dockerInfo, setDockerInfo } = useWizard()
   const [mode, setMode] = useState<Step5Params['mode']>('reuse')
   const [registering, setRegistering] = useState(false)
-  const [docker, setDocker] = useState<Record<string, NodeDockerInfo>>({})
-  const [probing, setProbing] = useState(false)
-
-  const pkgVersion = packages.find((p) => p.dockerVersion)?.dockerVersion
-  const pkgArchs = new Set(packages.map((p) => p.arch))
 
   const probe = useCallback(async () => {
-    setProbing(true)
-    try {
-      setDocker(await ipc.step5ProbeDocker(nodes))
-    } finally {
-      setProbing(false)
-    }
-  }, [nodes])
-
+    setDockerInfo(await ipc.step5ProbeDocker(nodes))
+  }, [nodes, setDockerInfo])
   useEffect(() => {
     ipc.listPackages().then(setPackages).catch(() => undefined)
-    probe()
+    probe().catch(() => undefined)
   }, [probe, setPackages])
 
-  async function pickAndRegister() {
+  async function register() {
     const path = await ipc.pickInstaller()
     if (!path) return
     setRegistering(true)
     try {
       const pkg = await ipc.registerPackage(path)
       setPackages(await ipc.listPackages())
-      message.success(`已登记安装包：${pkg.arch}${pkg.dockerVersion ? ` · docker ${pkg.dockerVersion}` : ''}`)
+      message.success(`已登记 ${pkg.arch}${pkg.dockerVersion ? ` · docker ${pkg.dockerVersion}` : ''}`)
     } catch (e) {
-      message.error(`解析安装包失败：${e instanceof Error ? e.message : String(e)}`)
+      message.error(e instanceof Error ? e.message : String(e))
     } finally {
       setRegistering(false)
     }
   }
 
-  const params: Step5Params = { mode }
-  const hasPackage = packages.length > 0
-  // 是否有节点架构缺对应安装包
-  const missingArchs = [
-    ...new Set(
-      nodes
-        .map((n) => probes[n.id]?.arch)
-        .filter((a): a is 'x86_64' | 'aarch64' => a === 'x86_64' || a === 'aarch64')
-        .filter((a) => !pkgArchs.has(a))
-    )
-  ]
-
-  const dockerCols: ColumnsType<NodeConfig> = [
-    {
-      title: '节点',
-      width: 160,
-      render: (_, n) => (
-        <Text style={{ fontFamily: 'monospace' }}>{n.ip}</Text>
-      )
-    },
-    {
-      title: '架构',
-      width: 120,
-      render: (_, n) => {
-        const a = probes[n.id]?.arch
-        if (!a || a === 'unknown') return <Tag>未知</Tag>
-        return pkgArchs.has(a) ? (
-          <Tag>{a}</Tag>
-        ) : (
-          <Tag color="error">{a} · 缺安装包</Tag>
-        )
-      }
-    },
-    {
-      title: '当前 Docker',
-      render: (_, n) => {
-        const d = docker[n.id]
-        if (!d) return <Text type="secondary">{probing ? '检测中…' : '-'}</Text>
-        return d.installed ? (
-          <Text style={{ fontFamily: 'monospace' }}>{d.version ?? '已安装'}</Text>
-        ) : (
-          <Text type="secondary">未安装</Text>
-        )
-      }
-    },
-    {
-      title: `与安装包${pkgVersion ? `（${pkgVersion}）` : ''}`,
-      render: (_, n) => {
-        const d = docker[n.id]
-        if (!d || !d.installed) return <Tag>—</Tag>
-        if (!pkgVersion || !d.version) return <Tag>未知</Tag>
-        return d.version === pkgVersion ? (
-          <Tag color="success">一致</Tag>
-        ) : (
-          <Tag color="warning">不一致 · 建议强制重装</Tag>
-        )
-      }
-    }
-  ]
+  const ready = nodes.filter((n) => probes[n.id]?.supported)
+  const archMap: Record<string, string[]> = {}
+  ready.forEach((n) => {
+    const a = probes[n.id]?.arch || 'unknown'
+    ;(archMap[a] = archMap[a] || []).push(n.ip)
+  })
+  const archKeys = Object.keys(archMap)
+  const isMixed = archKeys.length > 1
+  const allArchs: Arch[] = ['x86_64', 'aarch64']
+  const pkgOf = (a: Arch): InstallerPackage | undefined => packages.find((p) => p.arch === a)
+  const missingReq = allArchs.filter((a) => archMap[a] && !pkgOf(a))
+  const dockerReady = archKeys.length > 0 && missingReq.length === 0
+  const dockerInstalledAll = ready.every((n) => (dockerInfo as Record<string, NodeDockerInfo>)[n.id]?.installed)
 
   return (
-    <Space direction="vertical" size="large" style={{ width: '100%' }}>
-      <Text type="secondary">
-        从安装包抽取 Docker 二进制并下发到各节点离线安装（幂等校验）。下方显示各节点当前 Docker 版本与安装包是否一致。
-      </Text>
-
-      <Space wrap>
-        <Button icon={<FileZipOutlined />} loading={registering} onClick={pickAndRegister}>
-          登记安装包
-        </Button>
-        {packages.map((p) => (
-          <Tag key={p.arch} color="blue">
-            {p.arch}
-            {p.dockerVersion ? ` · docker ${p.dockerVersion}` : ''}
-          </Tag>
-        ))}
-        {!hasPackage && <Text type="warning">尚未登记安装包</Text>}
-      </Space>
-
-      {hasPackage && missingArchs.length > 0 && (
-        <Alert
-          type="warning"
-          showIcon
-          message={`存在 ${missingArchs.join('、')} 架构的节点但未登记对应安装包，请再登记一个该架构的安装包`}
-        />
-      )}
-
-      <div>
-        <Space style={{ marginBottom: 8 }}>
-          <Text strong>各节点 Docker 现状</Text>
-          <Button size="small" icon={<ReloadOutlined />} loading={probing} onClick={probe}>
-            重新检测
-          </Button>
-        </Space>
-        <Table
-          rowKey="id"
-          size="small"
-          pagination={false}
-          columns={dockerCols}
-          dataSource={nodes}
-        />
+    <div>
+      {/* arch groups */}
+      <div style={{ ...card, padding: '18px 20px', marginBottom: 14 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 14 }}>
+          <span style={{ fontFamily: 'var(--display)', fontWeight: 600, fontSize: 14.5 }}>就绪节点架构</span>
+          <span style={chip(isMixed ? 'warn' : archKeys.length === 0 ? 'neutral' : 'ok')}>
+            {archKeys.length === 0 ? '无就绪节点' : isMixed ? `混合架构 · ${archKeys.length} 种` : `单一架构 · ${archKeys[0]}`}
+          </span>
+        </div>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          {archKeys.length === 0 && <span style={{ fontSize: 12.5, color: 'var(--faint)' }}>请先在「主机接入」完成检测。</span>}
+          {archKeys.map((a) => (
+            <div key={a} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', border: '1px solid var(--border)', borderRadius: 11, background: 'var(--surface-2)' }}>
+              <span style={{ fontFamily: 'var(--mono)', fontWeight: 700, fontSize: 13, color: 'var(--accent-ink)' }}>{a}</span>
+              <span style={{ fontSize: 12, color: 'var(--dim)' }}>{archMap[a].length} 节点</span>
+              <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--faint)' }}>{archMap[a].join(' · ')}</span>
+            </div>
+          ))}
+        </div>
       </div>
 
-      <div>
-        <Text>安装模式：</Text>
-        <Radio.Group value={mode} onChange={(e) => setMode(e.target.value)} style={{ marginLeft: 8 }}>
-          <Radio value="reuse">复用（已装则跳过，幂等）</Radio>
-          <Radio value="force-reinstall">
-            <Text type="danger">强制重装（清除现有 Docker 与数据）</Text>
-          </Radio>
-        </Radio.Group>
+      {/* package slots */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '18px 2px 12px' }}>
+        <span style={{ fontFamily: 'var(--display)', fontWeight: 600, fontSize: 14 }}>选择安装包</span>
+        <span style={{ fontSize: 12, color: 'var(--faint)' }}>按架构提供离线包 · 标「必需」的必须登记才能安装</span>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        {allArchs.map((a) => {
+          const required = !!archMap[a]
+          const pkg = pkgOf(a)
+          const missing = required && !pkg
+          return (
+            <div key={a} style={{ border: `1px solid ${missing ? 'var(--err-border)' : 'var(--border)'}`, borderRadius: 13, background: 'var(--surface)', boxShadow: 'var(--card-shadow)', padding: '16px 18px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+                  <span style={{ fontFamily: 'var(--mono)', fontWeight: 700, fontSize: 13.5 }}>{a}</span>
+                  <span style={chip(required ? 'accent' : 'neutral')}>{required ? '必需' : '本集群无需'}</span>
+                </div>
+                <span style={chip(pkg ? 'ok' : required ? 'err' : 'neutral')}>{pkg ? '已登记' : required ? '缺少 · 必需' : '未登记'}</span>
+              </div>
+              {pkg ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '11px 13px', border: '1px solid var(--border)', borderRadius: 10, background: 'var(--surface-2)' }}>
+                  <span style={{ width: 9, height: 9, borderRadius: '50%', background: 'var(--ok)', flexShrink: 0 }} />
+                  <span style={{ fontFamily: 'var(--mono)', fontSize: 12.5 }}>iotcloud · docker {pkg.dockerVersion || '?'}</span>
+                </div>
+              ) : (
+                <button
+                  onClick={register}
+                  disabled={registering}
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    gap: 4,
+                    width: '100%',
+                    padding: 18,
+                    border: `1.5px dashed ${missing ? 'var(--err-border)' : 'var(--border-2)'}`,
+                    borderRadius: 10,
+                    background: 'transparent',
+                    color: missing ? 'var(--err)' : 'var(--dim)',
+                    cursor: 'pointer',
+                    fontFamily: 'inherit'
+                  }}
+                >
+                  <span style={{ fontSize: 18, lineHeight: 1 }}>＋</span>
+                  <span style={{ fontSize: 12.5, fontWeight: 600 }}>{required ? `登记 ${a} 安装包` : `可选登记 ${a}`}</span>
+                  <span style={{ fontSize: 11, color: 'var(--faint)' }}>点击选择离线包 (.tar.gz)</span>
+                </button>
+              )}
+            </div>
+          )
+        })}
       </div>
 
-      {mode === 'force-reinstall' && (
-        <Alert
-          type="error"
-          showIcon
-          message="强制重装会停止并删除现有 Docker、容器、镜像、卷及 /root/.docker 数据，执行前需输入确认词。"
-        />
-      )}
-
-      <StepRunner
-        runKey="step5"
-        nodes={nodes}
-        actionLabel="安装 Docker"
-        disabled={!hasPackage}
-        buildPlan={() => ipc.step5Plan(nodes, params)}
-        run={(runId) => ipc.step5Run(runId, nodes, params)}
-        onDone={() => probe()}
-      />
-    </Space>
+      {/* gate + install */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 13,
+          padding: '14px 16px',
+          borderRadius: 13,
+          marginTop: 18,
+          border: `1px solid ${dockerReady ? 'var(--ok-soft)' : 'var(--err-border)'}`,
+          background: dockerReady ? 'var(--ok-soft)' : 'var(--err-soft)'
+        }}
+      >
+        <div style={{ width: 34, height: 34, borderRadius: 9, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: dockerReady ? 'rgba(52,199,123,.18)' : 'rgba(255,90,77,.18)', color: dockerReady ? 'var(--ok)' : 'var(--err)', fontSize: 16 }}>
+          {dockerReady ? '✓' : '⚠'}
+        </div>
+        <div style={{ flex: 1, minWidth: 0, lineHeight: 1.45 }}>
+          <div style={{ fontWeight: 600, fontSize: 13.5 }}>{dockerReady ? '安装包齐备，可以安装' : '缺少必需架构的安装包'}</div>
+          <span style={{ fontSize: 12, color: 'var(--dim)' }}>
+            {dockerReady
+              ? dockerInstalledAll
+                ? '所有就绪节点已安装 Docker，可进入服务编排。'
+                : isMixed
+                  ? `混合架构 · 已登记 ${archKeys.join(' + ')} 离线包。`
+                  : `全部节点为 ${archKeys[0] || ''} · 已登记对应离线包。`
+              : `请先登记：${missingReq.join(' + ')} 架构的离线安装包。`}
+          </span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <label style={{ fontSize: 12, color: 'var(--dim)', display: 'flex', gap: 6, alignItems: 'center' }}>
+            <input type="checkbox" checked={mode === 'force-reinstall'} onChange={(e) => setMode(e.target.checked ? 'force-reinstall' : 'reuse')} />
+            强制重装
+          </label>
+          <StepRunner
+            runKey="step5"
+            nodes={nodes}
+            actionLabel={`安装 Docker 到 ${ready.length} 个节点`}
+            disabled={!dockerReady}
+            buildPlan={() => ipc.step5Plan(nodes, { mode })}
+            run={(runId) => ipc.step5Run(runId, nodes, { mode })}
+            onDone={() => probe()}
+          />
+        </div>
+      </div>
+    </div>
   )
 }

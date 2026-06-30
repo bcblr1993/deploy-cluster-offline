@@ -1,12 +1,4 @@
-import { useEffect, useState } from 'react'
-import { Button, Layout, Segmented, Space, Steps, Tag, Typography, theme } from 'antd'
-import {
-  ArrowLeftOutlined,
-  DashboardOutlined,
-  LeftOutlined,
-  RightOutlined,
-  RocketOutlined
-} from '@ant-design/icons'
+import { useEffect, type CSSProperties } from 'react'
 import { useWizard } from './store/wizard'
 import { ipc } from './ipc/client'
 import Step1Hosts from './pages/Step1Hosts'
@@ -17,19 +9,16 @@ import Step5Docker from './pages/Step5Docker'
 import Step6Services from './pages/Step6Services'
 import Overview from './pages/Overview'
 import ClusterList from './pages/ClusterList'
-import type { ViewMode } from './store/wizard'
-import type { AppInfo } from '@shared/types'
+import RunConsole from './components/RunConsole'
+import { btnGhost, btnPrimary } from './styles/cd'
 
-const { Header, Content, Footer } = Layout
-const { Text } = Typography
-
-const STEPS = [
-  { title: '主机配置', desc: '连接检测' },
-  { title: '主机名/hosts', desc: '映射' },
-  { title: '时间对齐', desc: 'chrony' },
-  { title: '磁盘预览', desc: 'SSD/HDD' },
-  { title: '安装 Docker', desc: '离线' },
-  { title: '服务编排', desc: '按节点部署' }
+const STAGES = [
+  { title: '主机接入', sub: '连接检测', desc: '录入现场所有节点的连接信息，并发检测连通性与运行环境（架构 / systemd / 权限 / docker / 联网）。' },
+  { title: '主机名 & hosts', sub: '映射', desc: '统一设置各节点主机名，并写入全集群一致的 /etc/hosts 解析表。' },
+  { title: '时间对齐', sub: 'chrony', desc: '校验节点间时钟偏差，按联网情况自动选时间源，用 chrony 对齐全集群时间。' },
+  { title: '磁盘预览', sub: 'SSD/HDD', desc: '扫描并预览各节点磁盘与挂载点（SSD/HDD、容量、使用率），规划数据落盘位置。' },
+  { title: '安装 Docker', sub: '离线', desc: '从离线包加载并安装 Docker 引擎与 compose，启用 systemd 守护与开机自启。' },
+  { title: '服务编排', sub: '按节点部署', desc: '把服务编排到节点：数据层 / 应用层 / 运维层按依赖与分层规则放置后一键部署。' }
 ]
 
 function StepBody({ step }: { step: number }) {
@@ -51,29 +40,54 @@ function StepBody({ step }: { step: number }) {
   }
 }
 
+const display = { fontFamily: 'var(--display)' } as const
+function chip(kind: 'ok' | 'neutral' | 'accent' | 'err'): CSSProperties {
+  const m: Record<string, CSSProperties> = {
+    ok: { background: 'var(--ok-soft)', color: 'var(--ok)' },
+    accent: { background: 'var(--accent-soft)', color: 'var(--accent-ink)' },
+    err: { background: 'var(--err-soft)', color: 'var(--err)' },
+    neutral: { background: 'var(--surface-2)', color: 'var(--dim)', border: '1px solid var(--border)' }
+  }
+  return {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 4,
+    padding: '2px 9px',
+    borderRadius: 6,
+    fontSize: 11.5,
+    fontWeight: 600,
+    fontFamily: 'var(--mono)',
+    ...m[kind]
+  }
+}
+
 export default function App() {
   const {
     step,
     setStep,
+    view,
+    setView,
     canLeaveStep1,
     canLeaveStep5,
     applyRunEvent,
     busy,
     appView,
-    view,
-    setView,
     closeCluster,
-    clusterName
+    clusterName,
+    clusterRemark,
+    theme,
+    toggleTheme,
+    nodes,
+    probes,
+    runOpen
   } = useWizard()
-  const [info, setInfo] = useState<AppInfo | null>(null)
-  const { token } = theme.useToken()
 
   useEffect(() => {
-    ipc.getAppInfo().then(setInfo).catch(() => undefined)
-    // 全局订阅运行事件 → 落到 store（与页面挂载解耦，切换步骤不丢日志）
     const off = ipc.onRunEvent(applyRunEvent)
     return off
   }, [applyRunEvent])
+
+  if (appView === 'clusters') return <ClusterList />
 
   async function backToClusters() {
     const c = useWizard.getState().toCluster()
@@ -81,158 +95,301 @@ export default function App() {
     closeCluster()
   }
 
-  // 集群列表页：独立布局
-  if (appView === 'clusters') {
-    return (
-      <Layout style={{ minHeight: '100vh' }}>
-        <Header
-          style={{
-            background: token.colorBgContainer,
-            borderBottom: `1px solid ${token.colorBorderSecondary}`,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            paddingInline: 24
-          }}
-        >
-          <Text strong style={{ fontSize: 16 }}>
-            离线集群部署工具
-          </Text>
-          {info && (
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              v{info.appVersion} · Electron {info.electronVersion} · {info.platform}
-            </Text>
-          )}
-        </Header>
-        <Content style={{ padding: 24, overflow: 'auto' }}>
-          <ClusterList />
-        </Content>
-      </Layout>
-    )
+  const gateOpen = canLeaveStep1()
+  const online = nodes.filter((n) => probes[n.id]?.reachable).length
+  const stageStatus = (i: number): 'done' | 'current' | 'ready' | 'blocked' => {
+    if (i > 0 && !gateOpen) return 'blocked'
+    if (view === 'wizard' && step === i) return 'current'
+    if (i === 0 && gateOpen) return 'done'
+    return 'ready'
   }
+  const deployDone = STAGES.filter((_, i) => stageStatus(i) === 'done').length
+  // 进入下一阶段的闸门：step0 需连接检测通过；step4(安装Docker) 需装好 Docker；其余沿用主机接入闸门
+  const canNext = step === 4 ? canLeaveStep5() : gateOpen
 
-  // 步骤门禁
-  const blockedByStep1 = step === 0 && !canLeaveStep1()
-  const blockedByStep5 = step === 4 && !canLeaveStep5()
-  const blockedNext = blockedByStep1 || blockedByStep5
+  const cur = STAGES[step]
+  const stHead = stageStatus(step)
+  const stHeadChip = stHead === 'done' ? 'ok' : stHead === 'current' ? 'accent' : stHead === 'blocked' ? 'err' : 'neutral'
+  const stHeadLabel = { done: '已完成', current: '进行中', ready: '待运行', blocked: '受阻' }[stHead]
 
   return (
-    <Layout style={{ height: '100vh' }}>
-      <Header
+    <div
+      style={{
+        height: '100vh',
+        background: 'var(--bg)',
+        color: 'var(--text)',
+        fontFamily: 'var(--body)',
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden'
+      }}
+    >
+      {/* health header */}
+      <header
         style={{
-          background: token.colorBgContainer,
-          borderBottom: `1px solid ${token.colorBorderSecondary}`,
+          height: 60,
+          flexShrink: 0,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          paddingInline: 24
+          padding: '0 22px 0 16px',
+          borderBottom: '1px solid var(--border)',
+          background: 'var(--surface)'
         }}
       >
-        <Space size="large">
-          <Button
-            type="text"
-            icon={<ArrowLeftOutlined />}
-            disabled={busy}
-            onClick={backToClusters}
-          >
-            集群列表
-          </Button>
-          <Space size={6}>
-            <Text strong style={{ fontSize: 16 }}>
-              {clusterName || '集群'}
-            </Text>
-            <Tag color="blue">当前集群</Tag>
-          </Space>
-          <Segmented
-            value={view}
-            onChange={(v) => !busy && setView(v as ViewMode)}
-            options={[
-              { label: '部署向导', value: 'wizard', icon: <RocketOutlined /> },
-              { label: '运维总览', value: 'overview', icon: <DashboardOutlined /> }
-            ]}
-            disabled={busy}
-          />
-        </Space>
-        {info && (
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            v{info.appVersion} · Electron {info.electronVersion} · {info.platform}
-          </Text>
-        )}
-      </Header>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, minWidth: 0 }}>
+          <button title="返回集群列表" disabled={busy} onClick={backToClusters} style={backBtn(busy)}>
+            ←
+          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 9, minWidth: 0 }}>
+            <span style={{ width: 10, height: 10, borderRadius: '50%', background: deployDone > 0 ? 'var(--ok)' : 'var(--faint)', flexShrink: 0 }} />
+            <span style={{ ...display, fontWeight: 600, fontSize: 16, letterSpacing: '-.01em', whiteSpace: 'nowrap' }}>{clusterName || '集群'}</span>
+            <span style={chip(deployDone > 0 ? 'ok' : 'neutral')}>{deployDone > 0 ? '运行中' : '未部署'}</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 6, paddingLeft: 14, borderLeft: '1px solid var(--border)' }}>
+            <Kpi label="节点在线">{online}/{nodes.length}</Kpi>
+            <Kpi label="部署阶段">{deployDone}/6</Kpi>
+          </div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <button style={themeBtn} title="切换主题" onClick={toggleTheme}>
+            <span style={{ fontSize: 15 }}>{theme === 'dark' ? '☀' : '☾'}</span>
+          </button>
+        </div>
+      </header>
 
-      {view === 'overview' ? (
-        <Content style={{ padding: 24, overflow: 'auto' }}>
-          <Overview />
-        </Content>
-      ) : (
-        <>
-          <Content style={{ padding: 24, overflow: 'auto' }}>
-            <Steps
-              current={step}
-              onChange={busy ? undefined : setStep}
-              items={STEPS.map((s) => ({
-                title: s.title,
-                description: s.desc,
-                disabled: busy
-              }))}
-              style={{ marginBottom: 24 }}
-            />
-            <div
-              style={{
-                background: token.colorBgContainer,
-                border: `1px solid ${token.colorBorderSecondary}`,
-                borderRadius: token.borderRadiusLG,
-                padding: 24,
-                minHeight: 360
-              }}
-            >
-              <StepBody step={step} />
-            </div>
-          </Content>
-
-          <Footer
-            style={{
-              background: token.colorBgContainer,
-              borderTop: `1px solid ${token.colorBorderSecondary}`,
-              display: 'flex',
-              justifyContent: 'space-between',
-              paddingBlock: 12
-            }}
-          >
-            <Button
-              icon={<LeftOutlined />}
-              disabled={step === 0 || busy}
-              onClick={() => setStep(step - 1)}
-            >
-              上一步
-            </Button>
-            <Space>
-              {busy && (
-                <Text type="warning" style={{ fontSize: 12 }}>
-                  正在执行操作，导航已锁定…
-                </Text>
-              )}
-              {!busy && blockedByStep1 && (
-                <Text type="warning" style={{ fontSize: 12 }}>
-                  需所有主机检测「可用」后才能继续
-                </Text>
-              )}
-              {!busy && blockedByStep5 && (
-                <Text type="warning" style={{ fontSize: 12 }}>
-                  需登记覆盖所有节点架构的安装包后才能继续
-                </Text>
-              )}
-              <Button
-                type="primary"
-                disabled={step === STEPS.length - 1 || blockedNext || busy}
-                onClick={() => setStep(step + 1)}
+      <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+        {/* sidebar */}
+        <aside
+          style={{
+            width: 248,
+            flexShrink: 0,
+            borderRight: '1px solid var(--border)',
+            background: 'var(--surface)',
+            overflow: 'auto',
+            padding: '16px 12px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 3
+          }}
+        >
+          <button onClick={() => setView('overview')} style={navItem(view === 'overview')}>
+            <span style={{ width: 18, textAlign: 'center', fontSize: 14, opacity: 0.8 }}>◎</span>集群详情
+          </button>
+          <div style={sidebarLabel}>
+            <span>部署流程</span>
+            <span style={{ fontFamily: 'var(--mono)' }}>{deployDone}/6</span>
+          </div>
+          {STAGES.map((st, i) => {
+            const status = stageStatus(i)
+            const active = view === 'wizard' && step === i
+            const locked = status === 'blocked'
+            return (
+              <button
+                key={i}
+                onClick={() => {
+                  if (busy) return
+                  setView('wizard')
+                  setStep(locked ? 0 : i)
+                }}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 11,
+                  width: '100%',
+                  padding: '8px 10px',
+                  border: 'none',
+                  borderRadius: 9,
+                  fontFamily: 'inherit',
+                  textAlign: 'left',
+                  cursor: locked ? 'not-allowed' : 'pointer',
+                  opacity: locked ? 0.55 : 1,
+                  background: active ? 'var(--accent-soft)' : 'transparent'
+                }}
               >
-                下一步 <RightOutlined />
-              </Button>
-            </Space>
-          </Footer>
-        </>
-      )}
-    </Layout>
+                <span style={stageBadge(status)}>{{ done: '✓', current: '◐', ready: '○', blocked: '🔒' }[status]}</span>
+                <span style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.25, flex: 1, minWidth: 0 }}>
+                  <span style={{ fontSize: 13, fontWeight: 600 }}>{st.title}</span>
+                  <span style={{ fontSize: 10.5, color: 'var(--faint)', fontFamily: 'var(--mono)' }}>{st.sub}</span>
+                </span>
+                {status === 'current' && <span style={chip('accent')}>进行中</span>}
+                {status === 'blocked' && <span style={chip('err')}>受阻</span>}
+              </button>
+            )
+          })}
+        </aside>
+
+        {/* content */}
+        <main style={{ flex: 1, overflow: 'auto' }}>
+          <div style={{ maxWidth: 1080, margin: '0 auto', padding: `30px 32px ${runOpen ? 360 : 40}px` }}>
+            {view === 'overview' ? (
+              <Overview />
+            ) : (
+              <div>
+                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 20, marginBottom: 22 }}>
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 5 }}>
+                      <h1 style={{ ...display, fontWeight: 600, fontSize: 23, margin: 0, letterSpacing: '-.02em' }}>{cur.title}</h1>
+                      <span style={chip(stHeadChip as 'ok')}>{stHeadLabel}</span>
+                    </div>
+                    <p style={{ margin: 0, fontSize: 13.5, color: 'var(--dim)', maxWidth: 560, lineHeight: 1.55 }}>{cur.desc}</p>
+                  </div>
+                  <div style={statPill}>
+                    <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--accent)' }} />
+                    <span style={{ fontSize: 12.5, color: 'var(--dim)' }}>阶段 {step + 1} / 6</span>
+                  </div>
+                </div>
+                <StepBody step={step} />
+                {!gateOpen && step > 0 && (
+                  <p style={{ marginTop: 16, fontSize: 12.5, color: 'var(--err)' }}>
+                    需先在「主机接入」让至少一个节点通过连接检测，才能执行后续阶段。
+                  </p>
+                )}
+                {step === 4 && !canLeaveStep5() && (
+                  <p style={{ marginTop: 10, fontSize: 12.5, color: 'var(--warn)' }}>
+                    提示：进入「服务编排」前需登记安装包并在所有节点装好 Docker。
+                  </p>
+                )}
+
+                {/* 统一阶段导航：每个流程都有上一步 / 下一步 */}
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 12,
+                    marginTop: 28,
+                    paddingTop: 20,
+                    borderTop: '1px solid var(--border)'
+                  }}
+                >
+                  <button
+                    onClick={() => step > 0 && setStep(step - 1)}
+                    disabled={step === 0}
+                    style={{ ...btnGhost, opacity: step === 0 ? 0.45 : 1, cursor: step === 0 ? 'not-allowed' : 'pointer' }}
+                  >
+                    ← 上一步
+                  </button>
+                  {step < STAGES.length - 1 ? (
+                    <button
+                      onClick={() => canNext && setStep(step + 1)}
+                      disabled={!canNext}
+                      title={
+                        canNext ? undefined : step === 4 ? '需登记安装包并在所有节点装好 Docker' : '需先让至少一个节点通过连接检测'
+                      }
+                      style={{ ...btnPrimary, opacity: canNext ? 1 : 0.5, cursor: canNext ? 'pointer' : 'not-allowed' }}
+                    >
+                      下一阶段：{STAGES[step + 1].title} →
+                    </button>
+                  ) : (
+                    <button onClick={() => setView('overview')} style={btnPrimary}>
+                      完成 · 进入集群详情 →
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </main>
+      </div>
+
+      <RunConsole />
+    </div>
   )
+}
+
+function Kpi({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11.5, color: 'var(--dim)' }}>
+      <b style={{ fontFamily: 'var(--mono)', fontWeight: 700, color: 'var(--text)', fontSize: 13 }}>{children}</b>
+      {label}
+    </span>
+  )
+}
+
+function navItem(on: boolean): CSSProperties {
+  return {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 11,
+    width: '100%',
+    padding: '10px 12px',
+    border: 'none',
+    borderRadius: 9,
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+    fontSize: 13.5,
+    fontWeight: 600,
+    textAlign: 'left',
+    background: on ? 'var(--accent-soft)' : 'transparent',
+    color: on ? 'var(--accent-ink)' : 'var(--text)'
+  }
+}
+function stageBadge(status: 'done' | 'current' | 'ready' | 'blocked'): CSSProperties {
+  const base: CSSProperties = {
+    width: 24,
+    height: 24,
+    borderRadius: 7,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: 12,
+    fontWeight: 700,
+    fontFamily: 'var(--mono)',
+    flexShrink: 0
+  }
+  if (status === 'done') return { ...base, background: 'var(--ok-soft)', color: 'var(--ok)' }
+  if (status === 'current') return { ...base, background: 'var(--accent)', color: '#fff' }
+  return { ...base, background: 'var(--surface-2)', color: 'var(--faint)', border: '1px solid var(--border)' }
+}
+const sidebarLabel: CSSProperties = {
+  marginTop: 6,
+  padding: '8px 12px 5px',
+  fontSize: 10.5,
+  letterSpacing: '.1em',
+  color: 'var(--faint)',
+  fontFamily: 'var(--mono)',
+  textTransform: 'uppercase',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between'
+}
+const statPill: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  background: 'var(--surface)',
+  border: '1px solid var(--border)',
+  borderRadius: 9,
+  padding: '9px 14px',
+  flexShrink: 0
+}
+const themeBtn: CSSProperties = {
+  width: 38,
+  height: 36,
+  border: '1px solid var(--border)',
+  background: 'var(--surface-2)',
+  borderRadius: 9,
+  color: 'var(--dim)',
+  cursor: 'pointer',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center'
+}
+function backBtn(busy: boolean): CSSProperties {
+  return {
+    width: 36,
+    height: 36,
+    border: '1px solid var(--border)',
+    borderRadius: 9,
+    background: 'var(--surface-2)',
+    color: 'var(--dim)',
+    fontSize: 16,
+    cursor: busy ? 'not-allowed' : 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+    opacity: busy ? 0.5 : 1
+  }
 }

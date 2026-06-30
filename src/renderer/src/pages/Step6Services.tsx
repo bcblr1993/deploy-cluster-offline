@@ -1,320 +1,219 @@
-// 步骤6：按节点选服务部署（放置矩阵 + 配置预览 + 部署）。
+// 步骤6：服务编排 — 设计稿重绘（分层放置矩阵 + 数据落盘 + 部署）。
 
-import { useEffect, useMemo, useState } from 'react'
-import { Alert, Button, Checkbox, Collapse, Input, Select, Space, Table, Tag, Typography } from 'antd'
-import { EyeOutlined } from '@ant-design/icons'
-import type { ColumnsType } from 'antd/es/table'
+import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { useWizard } from '../store/wizard'
 import { ipc } from '../ipc/client'
 import StepRunner from '../components/StepRunner'
-import type {
-  DeploymentPreview,
-  NodeConfig,
-  ServiceId,
-  ServiceMeta
-} from '@shared/types'
+import { btnGhost, card, chip, inputStyle } from '../styles/cd'
+import type { DeploymentPreview, ServiceId, ServiceMeta } from '@shared/types'
 
-const { Text } = Typography
+const tierColor = (t: number): string => (t === 1 ? 'var(--accent)' : t === 2 ? 'var(--ok)' : 'var(--warn)')
+const tierSoft = (t: number): string => (t === 1 ? 'var(--accent-soft)' : t === 2 ? 'var(--ok-soft)' : 'var(--warn-soft)')
 
-function dataPathFor(mountpoint: string, instanceId: string): string {
-  return `${mountpoint.replace(/\/+$/, '')}/sprixin-iotcloud-data/${instanceId}`
+function dataPathFor(mp: string, instanceId: string): string {
+  return `${mp.replace(/\/+$/, '')}/sprixin-iotcloud-data/${instanceId}`
 }
-
-interface MountInfo {
-  mp: string
-  used?: number
-  type: 'SSD' | 'HDD'
-  sizeBytes: number
-}
-
-// 各服务推荐落盘：redis 默认；pg/kafka 用 SSD；cassandra 用最大机械盘
-const RECO: Partial<Record<ServiceId, 'default' | 'ssd' | 'hdd'>> = {
-  redis: 'default',
-  postgres: 'ssd',
-  kafka: 'ssd',
-  cassandra: 'hdd'
-}
-const RECO_TEXT: Record<'default' | 'ssd' | 'hdd', string> = {
-  default: '默认位置',
-  ssd: '固态盘(SSD)',
-  hdd: '最大机械盘(HDD)'
-}
-
-function recommendMp(service: ServiceId, mps: MountInfo[]): string | undefined {
-  const kind = RECO[service]
-  if (kind === 'ssd') {
-    return mps.filter((m) => m.type === 'SSD').sort((a, b) => b.sizeBytes - a.sizeBytes)[0]?.mp
-  }
-  if (kind === 'hdd') {
-    return mps.filter((m) => m.type === 'HDD').sort((a, b) => b.sizeBytes - a.sizeBytes)[0]?.mp
-  }
-  return undefined
-}
-
-const CUSTOM = '__custom__'
+const RECO: Partial<Record<ServiceId, 'ssd' | 'hdd'>> = { postgres: 'ssd', kafka: 'ssd', cassandra: 'hdd' }
 
 export default function Step6Services() {
-  const { nodes, hostnames, placements, togglePlacement, disks, setPlacementDataPath, setView } =
-    useWizard()
+  const { nodes, hostnames, probes, placements, togglePlacement, disks, setPlacementDataPath, setView } = useWizard()
   const [catalog, setCatalog] = useState<Record<ServiceId, ServiceMeta> | null>(null)
   const [preview, setPreview] = useState<DeploymentPreview | null>(null)
-  const [customIds, setCustomIds] = useState<Record<string, boolean>>({})
   const [deployed, setDeployed] = useState(false)
-
-  // 该节点可用挂载点（来自步骤4 扫描），带磁盘类型/容量
-  const mountpointsOf = (nodeId: string): MountInfo[] => {
-    const out: MountInfo[] = []
-    const seen = new Set<string>()
-    for (const d of disks[nodeId] ?? []) {
-      for (const part of d.partitions) {
-        if (part.mountpoint && !seen.has(part.mountpoint)) {
-          seen.add(part.mountpoint)
-          out.push({
-            mp: part.mountpoint,
-            used: part.usedPercent,
-            type: d.type,
-            sizeBytes: part.sizeBytes
-          })
-        }
-      }
-    }
-    return out
-  }
-
-  // 有数据卷的实例（可选落盘磁盘）
-  const statefulPlacements = placements.filter((p) => catalog?.[p.service]?.dataMount)
 
   useEffect(() => {
     ipc.getCatalog().then(setCatalog).catch(() => undefined)
   }, [])
 
-  const services = useMemo(
-    () => (catalog ? (Object.values(catalog) as ServiceMeta[]) : []),
-    [catalog]
-  )
+  const services = useMemo(() => (catalog ? (Object.values(catalog) as ServiceMeta[]).sort((a, b) => a.tier - b.tier) : []), [catalog])
+  const mNodes = nodes.filter((n) => probes[n.id]?.supported)
+  const placed = (svc: ServiceId, nodeId: string): boolean => placements.some((p) => p.service === svc && p.nodeId === nodeId)
+  const stateful = placements.filter((p) => catalog?.[p.service]?.dataMount)
 
-  async function genPreview() {
-    setPreview(await ipc.step6Preview(placements, nodes))
+  const cellBase: CSSProperties = {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
+    cursor: 'pointer',
+    fontSize: 14,
+    fontWeight: 700,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontFamily: 'var(--mono)'
   }
 
-  const placed = (svc: ServiceId, nodeId: string): boolean =>
-    placements.some((p) => p.service === svc && p.nodeId === nodeId)
-
-  // 矩阵：行=节点，列=服务
-  const columns: ColumnsType<NodeConfig> = [
-    {
-      title: '节点',
-      fixed: 'left',
-      width: 150,
-      render: (_, n) => (
-        <span>
-          <Text strong>{hostnames[n.id] || n.ip}</Text>
-          <br />
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            {n.ip}
-          </Text>
-        </span>
-      )
-    },
-    ...services.map((svc) => ({
-      title: (
-        <Space direction="vertical" size={0}>
-          <Text>{svc.name}</Text>
-          {svc.clusterable && <Tag color="purple">可集群</Tag>}
-          {svc.singleton && <Tag>单例</Tag>}
-          {svc.manual && <Tag color="default">手动</Tag>}
-        </Space>
-      ),
-      width: 110,
-      align: 'center' as const,
-      render: (_: unknown, n: NodeConfig) =>
-        svc.manual ? (
-          <Text type="secondary">—</Text>
-        ) : (
-          <Checkbox
-            checked={placed(svc.id, n.id)}
-            onChange={() => togglePlacement(svc.id, n.id, svc.singleton)}
-          />
-        )
-    }))
-  ]
+  const mountsOf = (nodeId: string): { mp: string; type: 'SSD' | 'HDD'; size: number; used?: number }[] => {
+    const out: { mp: string; type: 'SSD' | 'HDD'; size: number; used?: number }[] = []
+    const seen = new Set<string>()
+    for (const d of disks[nodeId] ?? [])
+      for (const part of d.partitions)
+        if (part.mountpoint && !seen.has(part.mountpoint)) {
+          seen.add(part.mountpoint)
+          out.push({ mp: part.mountpoint, type: d.type, size: part.sizeBytes, used: part.usedPercent })
+        }
+    return out
+  }
 
   return (
-    <Space direction="vertical" size="large" style={{ width: '100%' }}>
-      <Text type="secondary">
-        勾选「在哪台机上跑哪个服务」。kafka/cassandra 勾多台即自动组成集群（auto 编号 + host 网络 + 真实 IP 装配）；
-        pg/redis/iotcloud 为单例。wechat 手动部署，工具不编排。
-      </Text>
+    <div>
+      {/* matrix */}
+      <div style={{ ...card, marginBottom: 16 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: `minmax(220px,1.6fr) repeat(${mNodes.length},1fr)`, background: 'var(--surface-2)', borderBottom: '1px solid var(--border)' }}>
+          <div style={{ padding: '14px 18px', fontSize: 11, letterSpacing: '.09em', color: 'var(--faint)', fontFamily: 'var(--mono)', textTransform: 'uppercase' }}>
+            服务 / 节点
+          </div>
+          {mNodes.map((n) => (
+            <div key={n.id} style={{ padding: '12px 10px', borderLeft: '1px solid var(--border)', textAlign: 'center' }}>
+              <div style={{ fontSize: 12.5, fontWeight: 600 }}>{hostnames[n.id] || n.ip.split('.').pop()}</div>
+              <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--faint)' }}>{n.ip}</div>
+            </div>
+          ))}
+        </div>
+        {services.map((c, ri) => {
+          const manual = !!c.manual
+          return (
+            <div key={c.id} style={{ display: 'grid', gridTemplateColumns: `minmax(220px,1.6fr) repeat(${mNodes.length},1fr)`, borderBottom: ri < services.length - 1 ? '1px solid var(--border)' : undefined }}>
+              <div style={{ padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ width: 26, height: 26, borderRadius: 7, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10.5, fontWeight: 700, fontFamily: 'var(--mono)', flexShrink: 0, background: tierSoft(c.tier), color: tierColor(c.tier) }}>
+                  T{c.tier}
+                </div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontFamily: 'var(--display)', fontWeight: 600, fontSize: 14 }}>{c.name}</span>
+                    <span style={chip('neutral')}>{c.role}</span>
+                  </div>
+                  <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--faint)', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {c.image} · :{c.ports.join(',')}
+                  </div>
+                </div>
+              </div>
+              {mNodes.map((n) => {
+                const on = placed(c.id, n.id)
+                let style: CSSProperties
+                let mark = '+'
+                if (manual) {
+                  style = { ...cellBase, background: 'transparent', border: '1px dashed var(--border-2)', color: 'var(--faint)', cursor: 'not-allowed' }
+                  mark = '–'
+                } else if (on) {
+                  style = { ...cellBase, background: 'var(--accent)', border: '1px solid var(--accent)', color: '#fff' }
+                  mark = '✓'
+                } else {
+                  style = { ...cellBase, background: 'var(--surface-2)', border: '1px solid var(--border)', color: 'transparent' }
+                }
+                return (
+                  <div key={n.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', borderLeft: '1px solid var(--border)', padding: 11 }}>
+                    <button style={style} onClick={() => !manual && togglePlacement(c.id, n.id, c.singleton)}>
+                      {mark}
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
+          )
+        })}
+      </div>
 
-      <Table
-        rowKey="id"
-        size="small"
-        pagination={false}
-        scroll={{ x: 'max-content' }}
-        columns={columns}
-        dataSource={nodes}
-      />
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', marginBottom: 18 }}>
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+          <span style={{ fontSize: 12, color: 'var(--faint)', fontFamily: 'var(--mono)' }}>启动分层</span>
+          <span style={chip('accent')}>T1 数据层</span>
+          <span style={{ color: 'var(--faint)' }}>→</span>
+          <span style={chip('ok')}>T2 应用层</span>
+          <span style={{ color: 'var(--faint)' }}>→</span>
+          <span style={chip('warn')}>T3 运维层</span>
+        </div>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button style={btnGhost} onClick={async () => setPreview(await ipc.step6Preview(placements, nodes))} disabled={placements.length === 0}>
+            生成预览
+          </button>
+          <StepRunner
+            runKey="step6-deploy"
+            nodes={nodes.filter((n) => placements.some((p) => p.nodeId === n.id))}
+            actionLabel={`部署到 ${mNodes.length} 个节点`}
+            icon="⏵"
+            disabled={placements.length === 0}
+            buildPlan={() => ipc.step6Plan(placements, nodes)}
+            run={(runId) => ipc.step6Deploy(runId, nodes, { placements })}
+            onDone={(r) => {
+              setDeployed(r.every((x) => x.status === 'success'))
+              const cl = useWizard.getState().toCluster()
+              if (cl.id) void ipc.clusterSave(cl)
+            }}
+          />
+        </div>
+      </div>
 
-      {statefulPlacements.length > 0 && (
-        <div>
-          <Text strong>数据落盘位置</Text>
-          <Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
-            默认在 ~/sprixin-iotcloud；可指定磁盘挂载点（需先在「磁盘预览」扫描该节点）
-          </Text>
-          <Space direction="vertical" size={8} style={{ width: '100%', marginTop: 8 }}>
-            {statefulPlacements.map((p) => {
-              const node = nodes.find((n) => n.id === p.nodeId)
-              const mps = mountpointsOf(p.nodeId)
-              const recoKind = RECO[p.service] ?? 'default'
-              const recoMp = recommendMp(p.service, mps)
-              const options = [
-                { value: '', label: '默认（~/sprixin-iotcloud）' },
-                ...mps.map((m) => ({
-                  value: dataPathFor(m.mp, p.instanceId),
-                  label: `${m.mp} · ${m.type}${m.used != null ? ` · 已用 ${m.used}%` : ''}${
-                    m.mp === recoMp ? ' · 推荐' : ''
-                  }`
-                })),
-                { value: CUSTOM, label: '手动指定路径…' }
-              ]
-              const optionValues = mps.map((m) => dataPathFor(m.mp, p.instanceId))
-              const isCustom =
-                !!customIds[p.instanceId] || (!!p.dataPath && !optionValues.includes(p.dataPath))
-              const selectValue = isCustom ? CUSTOM : p.dataPath ?? ''
-              const recoPath = recoMp ? dataPathFor(recoMp, p.instanceId) : ''
-              const recoApplied = recoKind === 'default' ? !p.dataPath : p.dataPath === recoPath
+      {/* data placement */}
+      {stateful.length > 0 && (
+        <div style={{ ...card, padding: '16px 18px', marginBottom: 16 }}>
+          <div style={{ fontFamily: 'var(--display)', fontWeight: 600, fontSize: 14, marginBottom: 10 }}>数据落盘位置</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {stateful.map((p) => {
+              const mps = mountsOf(p.nodeId)
+              const recoKind = RECO[p.service]
+              const recoMp = recoKind
+                ? mps.filter((m) => (recoKind === 'ssd' ? m.type === 'SSD' : m.type === 'HDD')).sort((a, b) => b.size - a.size)[0]?.mp
+                : undefined
               return (
-                <Space key={p.instanceId} wrap>
-                  <Tag color="blue" style={{ width: 92, textAlign: 'center' }}>
-                    {p.instanceId}
-                  </Tag>
-                  <Text type="secondary" style={{ width: 64 }}>
-                    {hostnames[p.nodeId] || node?.ip}
-                  </Text>
-                  <Tag color="gold">推荐: {RECO_TEXT[recoKind]}</Tag>
-                  <Select
-                    style={{ width: 360 }}
-                    value={selectValue}
-                    options={options}
-                    onChange={(v) => {
-                      if (v === CUSTOM) {
-                        setCustomIds((s) => ({ ...s, [p.instanceId]: true }))
-                      } else {
-                        setCustomIds((s) => ({ ...s, [p.instanceId]: false }))
-                        setPlacementDataPath(p.instanceId, v || undefined)
-                      }
-                    }}
-                  />
-                  {isCustom && (
-                    <Input
-                      style={{ width: 280 }}
-                      placeholder="/data/xxx 绝对路径"
-                      value={p.dataPath ?? ''}
-                      onChange={(e) =>
-                        setPlacementDataPath(p.instanceId, e.target.value || undefined)
-                      }
-                    />
-                  )}
-                  {!recoApplied && (recoKind === 'default' || recoMp) && (
-                    <Typography.Link
-                      onClick={() => {
-                        setCustomIds((s) => ({ ...s, [p.instanceId]: false }))
-                        setPlacementDataPath(p.instanceId, recoKind === 'default' ? undefined : recoPath)
-                      }}
-                    >
-                      用推荐
-                    </Typography.Link>
-                  )}
-                </Space>
+                <div key={p.instanceId} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                  <span style={{ ...chip('accent'), minWidth: 92, justifyContent: 'center' }}>{p.instanceId}</span>
+                  <span style={{ fontSize: 12, color: 'var(--faint)', width: 64 }}>{hostnames[p.nodeId] || nodes.find((n) => n.id === p.nodeId)?.ip}</span>
+                  <span style={chip('warn')}>推荐: {recoKind === 'ssd' ? 'SSD' : recoKind === 'hdd' ? '最大机械盘' : '默认'}</span>
+                  <select
+                    value={p.dataPath ?? ''}
+                    onChange={(e) => setPlacementDataPath(p.instanceId, e.target.value || undefined)}
+                    style={{ ...inputStyle, width: 340 }}
+                  >
+                    <option value="">默认（~/sprixin-iotcloud）</option>
+                    {mps.map((m) => (
+                      <option key={m.mp} value={dataPathFor(m.mp, p.instanceId)}>
+                        {m.mp} · {m.type}
+                        {m.used != null ? ` · 已用 ${m.used}%` : ''}
+                        {m.mp === recoMp ? ' · 推荐' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               )
             })}
-          </Space>
+          </div>
         </div>
       )}
 
-      <Space>
-        <Button icon={<EyeOutlined />} onClick={genPreview} disabled={placements.length === 0}>
-          生成配置预览
-        </Button>
-      </Space>
-
+      {/* config preview */}
       {preview && preview.warnings.length > 0 && (
-        <Alert type="warning" showIcon message="放置告警" description={
-          <ul style={{ margin: 0, paddingLeft: 18 }}>
-            {preview.warnings.map((w, i) => (
-              <li key={i}>{w}</li>
-            ))}
-          </ul>
-        } />
+        <div style={{ ...card, borderColor: 'var(--warn)', padding: '12px 16px', marginBottom: 12 }}>
+          {preview.warnings.map((w, i) => (
+            <div key={i} style={{ fontSize: 12.5, color: 'var(--warn)' }}>
+              ⚠ {w}
+            </div>
+          ))}
+        </div>
       )}
-
-      {preview && preview.instances.length > 0 && (
-        <Collapse
-          items={preview.instances.map((inst) => ({
-            key: inst.instanceId,
-            label: (
-              <Space>
-                <Text strong>{inst.instanceId}</Text>
-                <Tag color="blue">{inst.nodeIp}</Tag>
-                {inst.cluster && <Tag color="purple">集群</Tag>}
-              </Space>
-            ),
-            children: (
-              <>
-                <Text type="secondary">docker-compose.yml</Text>
-                <pre style={preStyle}>{inst.compose}</pre>
-                {inst.env && (
-                  <>
-                    <Text type="secondary">.env</Text>
-                    <pre style={preStyle}>{inst.env}</pre>
-                  </>
-                )}
-              </>
-            )
-          }))}
-        />
-      )}
-
-      <StepRunner
-        runKey="step6-deploy"
-        nodes={nodes.filter((n) => placements.some((p) => p.nodeId === n.id))}
-        actionLabel="部署服务"
-        disabled={placements.length === 0}
-        buildPlan={() => ipc.step6Plan(placements, nodes)}
-        run={(runId) => ipc.step6Deploy(runId, nodes, { placements })}
-        onDone={(results) => {
-          setDeployed(results.every((r) => r.status === 'success'))
-          const c = useWizard.getState().toCluster()
-          if (c.id) void ipc.clusterSave(c)
-        }}
-      />
+      {preview &&
+        preview.instances.map((inst) => (
+          <details key={inst.instanceId} style={{ ...card, padding: '10px 14px', marginBottom: 8 }}>
+            <summary style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontFamily: 'var(--display)', fontWeight: 600 }}>{inst.instanceId}</span>
+              <span style={chip('accent')}>{inst.nodeIp}</span>
+              {inst.cluster && <span style={chip('warn')}>集群</span>}
+            </summary>
+            <pre style={{ margin: '8px 0 0', background: 'var(--surface-2)', padding: 10, borderRadius: 6, fontSize: 11.5, fontFamily: 'var(--mono)', maxHeight: 240, overflow: 'auto' }}>
+              {inst.compose}
+              {inst.env ? '\n# .env\n' + inst.env : ''}
+            </pre>
+          </details>
+        ))}
 
       {deployed && (
-        <Alert
-          type="success"
-          showIcon
-          message="部署完成"
-          description="可进入「运维总览」查看各节点服务运行状态。"
-          action={
-            <Button type="primary" onClick={() => setView('overview')}>
-              进入运维总览
-            </Button>
-          }
-        />
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '14px 16px', borderRadius: 13, border: '1px solid var(--ok-soft)', background: 'var(--ok-soft)', marginTop: 8 }}>
+          <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--ok)' }}>部署完成 · 可进入「集群详情」查看运行状态</span>
+          <button style={btnGhost} onClick={() => setView('overview')}>
+            进入集群详情 →
+          </button>
+        </div>
       )}
-
-      <Text type="secondary" style={{ fontSize: 12 }}>
-        提示：卸载服务请到顶部「运维总览」使用一键全卸载。
-      </Text>
-    </Space>
+    </div>
   )
-}
-
-const preStyle: React.CSSProperties = {
-  background: '#f5f5f5',
-  padding: 10,
-  borderRadius: 6,
-  maxHeight: 260,
-  overflow: 'auto',
-  fontSize: 12
 }

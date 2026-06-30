@@ -1,127 +1,81 @@
-// 步骤2：主机名 & hosts 映射页。
-// 先读取机器现有主机名/hosts → 预填主机名 → 合并预览（重复不重复加入）。
+// 步骤2：主机名 & hosts — 设计稿重绘（表 + /etc/hosts 预览）。
 
 import { useEffect, useState } from 'react'
-import { Button, Collapse, Input, Space, Table, Tag, Typography } from 'antd'
-import { EyeOutlined, ReloadOutlined } from '@ant-design/icons'
-import type { ColumnsType } from 'antd/es/table'
 import { useWizard } from '../store/wizard'
 import { ipc } from '../ipc/client'
 import StepRunner from '../components/StepRunner'
 import { buildManagedHosts } from '@shared/hosts'
-import type { NodeConfig, Step2Params, Step2Read } from '@shared/types'
-
-const { Text } = Typography
+import { card, chip, inputStyle, th } from '../styles/cd'
+import type { Step2Params, Step2Read } from '@shared/types'
 
 export default function Step2Hostname() {
   const { nodes, hostnames, setHostname, initHostnames } = useWizard()
   const [reads, setReads] = useState<Record<string, Step2Read>>({})
-  const [loading, setLoading] = useState(false)
-  const [showPreview, setShowPreview] = useState(false)
-
-  async function readCurrent() {
-    setLoading(true)
-    try {
-      const r = await ipc.step2Read(nodes)
-      setReads(r)
-      // 用机器现有主机名预填（仅对空/默认值的字段）
-      for (const n of nodes) {
-        const cur = r[n.id]?.hostname
-        if (cur) setHostname(n.id, cur)
-      }
-      initHostnames() // 仍为空的填 node-N 兜底
-    } finally {
-      setLoading(false)
-    }
-  }
 
   useEffect(() => {
-    readCurrent()
+    ipc
+      .step2Read(nodes)
+      .then((r) => {
+        setReads(r)
+        for (const n of nodes) if (r[n.id]?.hostname) setHostname(n.id, r[n.id].hostname)
+        initHostnames()
+      })
+      .catch(() => initHostnames())
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const params: Step2Params = { hostnames }
   const entries = nodes.map((n) => ({ ip: n.ip, hostname: hostnames[n.id] ?? '' }))
-
-  const columns: ColumnsType<NodeConfig> = [
-    { title: 'IP', dataIndex: 'ip', width: 150 },
-    { title: '用户名', dataIndex: 'username', width: 110 },
-    {
-      title: '当前主机名',
-      width: 160,
-      render: (_, r) => <Text type="secondary">{reads[r.id]?.hostname || '—'}</Text>
-    },
-    {
-      title: '新主机名',
-      width: 220,
-      render: (_, r) => (
-        <Input
-          value={hostnames[r.id] ?? ''}
-          placeholder="node-1"
-          onChange={(e) => setHostname(r.id, e.target.value.trim())}
-        />
-      )
-    }
-  ]
+  // 以第一个节点的现有 hosts 作为预览基准
+  const merged = buildManagedHosts(reads[nodes[0]?.id]?.hosts ?? '', entries)
 
   return (
-    <Space direction="vertical" size="large" style={{ width: '100%' }}>
-      <Text type="secondary">
-        先读取机器现有主机名与 /etc/hosts；应用时<Text type="warning">强制覆盖</Text>同 IP/主机名的旧映射，
-        每个主机仅保留一条权威条目（localhost 等无关条目与注释保留）。覆盖前会在确认弹窗给出提醒。
-      </Text>
-
-      <Space>
-        <Button icon={<ReloadOutlined />} loading={loading} onClick={readCurrent}>
-          重新读取现状
-        </Button>
-        <Button icon={<EyeOutlined />} onClick={() => setShowPreview((v) => !v)}>
-          {showPreview ? '收起预览' : '预览合并后的 hosts'}
-        </Button>
-      </Space>
-
-      <Table rowKey="id" size="middle" pagination={false} columns={columns} dataSource={nodes} />
-
-      {showPreview && (
-        <Collapse
-          items={nodes.map((n) => {
-            const r = buildManagedHosts(reads[n.id]?.hosts ?? '', entries)
-            return {
-              key: n.id,
-              label: (
-                <Space>
-                  <Text strong>{n.ip}</Text>
-                  <Tag color="green">新增 {r.added}</Tag>
-                  <Tag color={r.overridden ? 'orange' : undefined}>覆盖旧条目 {r.overridden}</Tag>
-                </Space>
-              ),
-              children: (
-                <pre
-                  style={{
-                    margin: 0,
-                    maxHeight: 240,
-                    overflow: 'auto',
-                    fontSize: 12,
-                    background: '#f5f5f5',
-                    padding: 10,
-                    borderRadius: 6
-                  }}
-                >
-                  {r.merged}
-                </pre>
-              )
-            }
-          })}
+    <div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 16, alignItems: 'start' }}>
+        <div style={card}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1.1fr 1.4fr', background: 'var(--surface-2)', borderBottom: '1px solid var(--border)' }}>
+            <div style={th}>IP 地址</div>
+            <div style={th}>主机名</div>
+          </div>
+          {nodes.map((n, i) => (
+            <div key={n.id} style={{ display: 'grid', gridTemplateColumns: '1.1fr 1.4fr', borderBottom: i < nodes.length - 1 ? '1px solid var(--border)' : undefined }}>
+              <div style={{ padding: '13px 16px', display: 'flex', alignItems: 'center', gap: 9 }}>
+                <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--ok)', flexShrink: 0 }} />
+                <span style={{ fontFamily: 'var(--mono)', fontSize: 13.5, fontWeight: 500 }}>{n.ip}</span>
+              </div>
+              <div style={{ padding: '9px 16px', display: 'flex', alignItems: 'center' }}>
+                <input
+                  style={{ ...inputStyle, fontFamily: 'var(--mono)' }}
+                  placeholder="node-1"
+                  value={hostnames[n.id] ?? ''}
+                  onChange={(e) => setHostname(n.id, e.target.value.trim())}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+        <div style={card}>
+          <div style={{ padding: '13px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontFamily: 'var(--mono)', fontSize: 11, letterSpacing: '.06em', color: 'var(--faint)', textTransform: 'uppercase' }}>
+              /etc/hosts 预览
+            </span>
+            <span style={{ fontSize: 11, color: 'var(--faint)' }}>全集群一致</span>
+            <span style={{ marginLeft: 'auto', ...chip('ok') }}>新增 {merged.added}</span>
+          </div>
+          <pre style={{ margin: 0, padding: '14px 16px', fontFamily: 'var(--mono)', fontSize: 12.5, lineHeight: 1.9, color: 'var(--dim)', whiteSpace: 'pre-wrap', maxHeight: 320, overflow: 'auto' }}>
+            {merged.merged}
+          </pre>
+        </div>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
+        <StepRunner
+          runKey="step2"
+          nodes={nodes}
+          actionLabel={`写入主机名与 hosts 到 ${nodes.length} 个节点`}
+          buildPlan={() => ipc.step2Plan(nodes, params)}
+          run={(runId) => ipc.step2Run(runId, nodes, params)}
         />
-      )}
-
-      <StepRunner
-        runKey="step2"
-        nodes={nodes}
-        actionLabel="应用主机名 & hosts"
-        buildPlan={() => ipc.step2Plan(nodes, params)}
-        run={(runId) => ipc.step2Run(runId, nodes, params)}
-      />
-    </Space>
+      </div>
+    </div>
   )
 }
