@@ -7,6 +7,7 @@ import type {
   DiskInfo,
   InstallerPackage,
   NodeConfig,
+  NodeDockerInfo,
   NodeProbe,
   RunEvent,
   ServiceId,
@@ -57,10 +58,20 @@ interface WizardState {
   placements: ServicePlacement[]
   /** 步骤4 扫描结果，供步骤6 选数据落盘磁盘用 */
   disks: Record<string, DiskInfo[]>
+  /** 步骤5 各节点 Docker 安装状态（门禁用） */
+  dockerInfo: Record<string, NodeDockerInfo>
   /** 各步骤运行状态（key 如 step2/step3/step5/step6-deploy/uninstall） */
   runs: Record<string, RunState>
   /** 全局锁：任一步骤执行中为 true，期间禁止导航 */
   busy: boolean
+  /** 运行控制台：当前展示的 runKey + 是否展开 */
+  activeRunKey: string | null
+  runOpen: boolean
+  setRunOpen: (b: boolean) => void
+  /** 关闭控制台：清空当前活动运行指针（运行已结束时使用，连角标一并隐藏） */
+  closeRun: () => void
+  /** 深/浅主题 */
+  theme: 'light' | 'dark'
   /** 顶层视图：集群列表 / 集群内 */
   appView: 'clusters' | 'cluster'
   /** 集群内视图：部署向导 / 运维总览 */
@@ -73,6 +84,7 @@ interface WizardState {
 
   setStep: (step: number) => void
   setView: (view: ViewMode) => void
+  toggleTheme: () => void
   setAppView: (v: 'clusters' | 'cluster') => void
   /** 打开集群：填充工作区状态，按是否部署过决定落到总览/向导 */
   openCluster: (c: Cluster) => void
@@ -106,7 +118,8 @@ interface WizardState {
   /** 步骤1 是否可放行：至少一台、全部已探测且 supported */
   canLeaveStep1: () => boolean
   setPackages: (pkgs: InstallerPackage[]) => void
-  /** 步骤5 是否可放行：已登记覆盖所有节点架构的安装包 */
+  setDockerInfo: (m: Record<string, NodeDockerInfo>) => void
+  /** 步骤5 是否可放行：覆盖架构的安装包 + 所有节点已装 Docker */
   canLeaveStep5: () => boolean
 }
 
@@ -120,8 +133,12 @@ export const useWizard = create<WizardState>((set, get) => ({
   hostnames: {},
   placements: [],
   disks: {},
+  dockerInfo: {},
   runs: {},
   busy: false,
+  activeRunKey: null,
+  runOpen: false,
+  theme: 'light',
   appView: 'clusters',
   view: 'wizard',
   clusterId: null,
@@ -129,6 +146,9 @@ export const useWizard = create<WizardState>((set, get) => ({
 
   setStep: (step) => set({ step }),
   setView: (view) => set({ view }),
+  setRunOpen: (b) => set({ runOpen: b }),
+  closeRun: () => set({ activeRunKey: null, runOpen: false }),
+  toggleTheme: () => set((s) => ({ theme: s.theme === 'dark' ? 'light' : 'dark' })),
   setAppView: (v) => set({ appView: v }),
 
   openCluster: (c) => {
@@ -155,6 +175,7 @@ export const useWizard = create<WizardState>((set, get) => ({
       probes: {},
       probing: {},
       disks: {},
+      dockerInfo: {},
       runs: {},
       busy: false,
       hydrated: true
@@ -179,7 +200,7 @@ export const useWizard = create<WizardState>((set, get) => ({
   },
   addNode: () => set((s) => ({ nodes: [...s.nodes, newNode()] })),
   removeNode: (id) => set((s) => ({ nodes: s.nodes.filter((n) => n.id !== id) })),
-  setNodes: (nodes) => set({ nodes, probes: {}, probing: {}, hostnames: {} }),
+  setNodes: (nodes) => set({ nodes, probes: {}, probing: {}, hostnames: {}, dockerInfo: {} }),
   updateNode: (id, patch) =>
     set((s) => ({
       nodes: s.nodes.map((n) => (n.id === id ? { ...n, ...patch } : n))
@@ -227,6 +248,8 @@ export const useWizard = create<WizardState>((set, get) => ({
   startRun: (key, runId, nodeIds) =>
     set((s) => ({
       busy: true,
+      activeRunKey: key,
+      runOpen: true,
       runs: {
         ...s.runs,
         [key]: {
@@ -303,16 +326,18 @@ export const useWizard = create<WizardState>((set, get) => ({
   },
 
   setPackages: (pkgs) => set({ packages: pkgs }),
+  setDockerInfo: (m) => set({ dockerInfo: m }),
 
   canLeaveStep5: () => {
     const s = get()
     if (s.packages.length === 0) return false
     const archs = new Set(s.packages.map((p) => p.arch))
-    // 每个节点的架构都要有对应安装包（未探测/未知不阻断，step1 已拦不支持的）
     return s.nodes.every((n) => {
       const a = s.probes[n.id]?.arch
-      if (!a || a === 'unknown') return true
-      return archs.has(a)
+      const archOk = !a || a === 'unknown' ? true : archs.has(a)
+      // 必须真正装上 Docker 才能进部署
+      const dockerOk = s.dockerInfo[n.id]?.installed === true
+      return archOk && dockerOk
     })
   }
 }))

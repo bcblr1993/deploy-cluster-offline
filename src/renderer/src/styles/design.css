@@ -1,0 +1,133 @@
+/* ClusterDeploy 设计系统（来自用户 Claude Design 设计稿）— 深/浅双主题 */
+
+@import '@fontsource/space-grotesk/400.css';
+@import '@fontsource/space-grotesk/500.css';
+@import '@fontsource/space-grotesk/600.css';
+@import '@fontsource/space-grotesk/700.css';
+@import '@fontsource/manrope/400.css';
+@import '@fontsource/manrope/500.css';
+@import '@fontsource/manrope/600.css';
+@import '@fontsource/manrope/700.css';
+@import '@fontsource/manrope/800.css';
+@import '@fontsource/jetbrains-mono/400.css';
+@import '@fontsource/jetbrains-mono/500.css';
+@import '@fontsource/jetbrains-mono/600.css';
+
+:root {
+  --bg: #0b0c0e;
+  --surface: #131418;
+  --surface-2: #1a1c21;
+  --elevate: #1f2228;
+  --border: #23262c;
+  --border-2: #30343c;
+  --text: #eef0f3;
+  --dim: #a0a4ad;
+  --faint: #676c76;
+  --accent: #3a8dff;
+  --accent-soft: rgba(58, 141, 255, 0.14);
+  --accent-border: rgba(58, 141, 255, 0.42);
+  --accent-ink: #cfe3ff;
+  --ok: #34c77b;
+  --ok-soft: rgba(52, 199, 123, 0.14);
+  --warn: #f0b03a;
+  --warn-soft: rgba(240, 176, 58, 0.14);
+  --err: #ff5a4d;
+  --err-soft: rgba(255, 90, 77, 0.14);
+  --err-border: rgba(255, 90, 77, 0.4);
+  --card-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+  --mono: 'JetBrains Mono', ui-monospace, monospace;
+  --display: 'Space Grotesk', system-ui, sans-serif;
+  --body: 'Manrope', system-ui, sans-serif;
+}
+
+[data-app-theme='light'] {
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --surface-2: #f2f4f7;
+  --elevate: #ffffff;
+  --border: #e6e8ec;
+  --border-2: #d4d8df;
+  --text: #15171b;
+  --dim: #5a606b;
+  --faint: #9aa0ab;
+  --accent: #1f7bf0;
+  --accent-soft: rgba(31, 123, 240, 0.1);
+  --accent-border: rgba(31, 123, 240, 0.34);
+  --accent-ink: #0d4fa8;
+  --ok: #16a35c;
+  --ok-soft: rgba(22, 163, 92, 0.1);
+  --warn: #c2860d;
+  --warn-soft: rgba(194, 134, 13, 0.12);
+  --err: #dc3b28;
+  --err-soft: rgba(220, 59, 40, 0.1);
+  --err-border: rgba(220, 59, 40, 0.32);
+  --card-shadow: 0 1px 2px rgba(20, 28, 48, 0.06), 0 8px 26px rgba(20, 28, 48, 0.05);
+}
+
+* {
+  box-sizing: border-box;
+}
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+}
+body {
+  font-family: var(--body);
+  -webkit-font-smoothing: antialiased;
+  letter-spacing: -0.005em;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-2);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@keyframes cdSlideUp {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+@keyframes cdSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 自绘组件复用类 */
+.cd-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 9px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  font-family: var(--mono);
+  letter-spacing: 0.01em;
+}
+.cd-input {
+  width: 100%;
+  border-radius: 9px;
+  border: 1px solid var(--border-2);
+  background: var(--surface-2);
+  color: var(--text);
+  font-family: inherit;
+  outline: none;
+}
+.cd-input:focus {
+  border-color: var(--accent-border);
+}
