@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 120 120" fill="none">
+  <!-- macOS 图标规范：内容占画布约 80%，四周留 ~10% 透明边距，整体居中 -->
+  <g transform="translate(12,12)">
+    <!-- 应用容器（圆角方形，主蓝） radiusRatio=0.235 -->
+    <rect x="0" y="0" width="96" height="96" rx="22.56" ry="22.56" fill="#1f7bf0"/>
+    <rect x="1.1" y="1.1" width="93.8" height="93.8" rx="21.46" ry="21.46" fill="none" stroke="rgba(255,255,255,.16)" stroke-width="1.6"/>
+    <!-- 连线 -->
+    <g stroke="rgba(255,255,255,.5)" stroke-width="3.1" stroke-linecap="round">
+      <line x1="48" y1="33" x2="30" y2="63"/>
+      <line x1="48" y1="33" x2="66" y2="63"/>
+      <line x1="30" y1="63" x2="66" y2="63"/>
+    </g>
+    <!-- 主节点环 -->
+    <circle cx="48" cy="32" r="13" fill="none" stroke="rgba(255,255,255,.92)" stroke-width="2.3"/>
+    <!-- 三节点 -->
+    <circle cx="48" cy="32" r="8.4" fill="#ffffff"/>
+    <circle cx="30" cy="64" r="6.7" fill="#ffffff"/>
+    <circle cx="66" cy="64" r="6.7" fill="#ffffff"/>
+    <!-- 在线绿点 -->
+    <circle cx="78" cy="78" r="13.5" fill="#1f7bf0"/>
+    <circle cx="78" cy="78" r="9.5" fill="#16a35c"/>
+  </g>
+</svg>

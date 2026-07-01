@@ -1,7 +1,12 @@
 import { app, shell, BrowserWindow } from 'electron'
 import { join } from 'path'
+import { existsSync } from 'fs'
 import { registerIpc } from './ipc'
 import { sshPool } from './ssh/SshPool'
+
+// 开发模式下的应用图标（打包后由 electron-builder 用 build/icon.* 派生，无需此处）
+const devIcon = join(process.cwd(), 'build', 'icon.png')
+const hasDevIcon = existsSync(devIcon)
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
@@ -11,6 +16,7 @@ function createWindow(): void {
     minHeight: 640,
     show: false,
     title: '离线集群部署工具',
+    ...(hasDevIcon ? { icon: devIcon } : {}),
     autoHideMenuBar: true,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -37,6 +43,8 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  // macOS dev 模式下 Dock 图标（打包版由 icns 提供）
+  if (process.platform === 'darwin' && hasDevIcon && app.dock) app.dock.setIcon(devIcon)
   registerIpc()
   createWindow()
 
