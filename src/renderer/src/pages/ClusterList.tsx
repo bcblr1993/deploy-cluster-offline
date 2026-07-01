@@ -63,6 +63,29 @@ const iconBtn: CSSProperties = {
   justifyContent: 'center'
 }
 const display = { fontFamily: 'var(--display)' } as const
+const ipChip: CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  padding: '3px 9px',
+  borderRadius: 7,
+  border: '1px solid var(--border)',
+  background: 'var(--surface-2)',
+  color: 'var(--dim)',
+  fontFamily: 'var(--mono)',
+  fontSize: 12,
+  fontWeight: 500
+}
+const ipMore: CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  padding: '3px 9px',
+  borderRadius: 7,
+  border: '1px dashed var(--border-2)',
+  background: 'transparent',
+  color: 'var(--faint)',
+  fontFamily: 'var(--mono)',
+  fontSize: 12
+}
 
 function chip(kind: 'ok' | 'neutral'): CSSProperties {
   const m: Record<string, CSSProperties> = {
@@ -365,9 +388,28 @@ export default function ClusterList() {
                   </div>
                   <span style={chip(c.deployed ? 'ok' : 'neutral')}>{c.deployed ? '已部署' : '未部署'}</span>
                 </div>
-                <p style={{ margin: '0 0 16px', fontSize: 13, lineHeight: 1.55, color: 'var(--dim)', minHeight: 40 }}>
-                  {c.remark || '（无备注）'}
-                </p>
+                {c.remark && c.remark.trim() && (
+                  <p style={{ margin: '0 0 12px', fontSize: 12, lineHeight: 1.5, color: 'var(--faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {c.remark}
+                  </p>
+                )}
+                <div style={{ marginBottom: 15 }}>
+                  <div style={{ fontSize: 10, fontFamily: 'var(--mono)', letterSpacing: '.1em', color: 'var(--faint)', textTransform: 'uppercase', marginBottom: 8 }}>
+                    节点 IP
+                  </div>
+                  {c.ips.length > 0 ? (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                      {c.ips.slice(0, 4).map((ip) => (
+                        <span key={ip} style={ipChip}>
+                          {ip}
+                        </span>
+                      ))}
+                      {c.ips.length > 4 && <span style={ipMore}>+{c.ips.length - 4}</span>}
+                    </div>
+                  ) : (
+                    <span style={{ fontSize: 12, color: 'var(--faint)', fontStyle: 'italic' }}>尚未接入节点</span>
+                  )}
+                </div>
                 <div
                   style={{
                     display: 'flex',
