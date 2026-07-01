@@ -202,9 +202,23 @@ export const useWizard = create<WizardState>((set, get) => ({
   removeNode: (id) => set((s) => ({ nodes: s.nodes.filter((n) => n.id !== id) })),
   setNodes: (nodes) => set({ nodes, probes: {}, probing: {}, hostnames: {}, dockerInfo: {} }),
   updateNode: (id, patch) =>
-    set((s) => ({
-      nodes: s.nodes.map((n) => (n.id === id ? { ...n, ...patch } : n))
-    })),
+    set((s) => {
+      const nodes = s.nodes.map((n) => (n.id === id ? { ...n, ...patch } : n))
+      // 改动连接要素（ip/port/username/password）时，旧的探测/Docker 状态即失效：
+      // 否则会出现「显示新 IP、状态却仍是旧 IP」的错乱。清缓存，强制重新检测。
+      const connKeys: (keyof NodeConfig)[] = ['ip', 'port', 'username', 'password']
+      const touchesConn = connKeys.some((k) => k in patch && patch[k] !== s.nodes.find((n) => n.id === id)?.[k])
+      if (!touchesConn) return { nodes }
+      const probes = { ...s.probes }
+      const probing = { ...s.probing }
+      const dockerInfo = { ...s.dockerInfo }
+      const disks = { ...s.disks }
+      delete probes[id]
+      delete probing[id]
+      delete dockerInfo[id]
+      delete disks[id]
+      return { nodes, probes, probing, dockerInfo, disks }
+    }),
   setProbe: (id, probe) => set((s) => ({ probes: { ...s.probes, [id]: probe } })),
   setProbing: (id, v) => set((s) => ({ probing: { ...s.probing, [id]: v } })),
   setHostname: (id, name) => set((s) => ({ hostnames: { ...s.hostnames, [id]: name } })),
