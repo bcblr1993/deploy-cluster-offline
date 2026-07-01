@@ -68,6 +68,7 @@ export default function App() {
     setStep,
     view,
     setView,
+    deployed,
     canLeaveStep1,
     canLeaveStep5,
     applyRunEvent,
@@ -175,7 +176,12 @@ export default function App() {
             gap: 3
           }}
         >
-          <button onClick={() => setView('overview')} style={navItem(view === 'overview')}>
+          <button
+            onClick={() => deployed && setView('overview')}
+            disabled={!deployed}
+            title={deployed ? undefined : '需先完成服务部署，才能进入集群详情'}
+            style={{ ...navItem(view === 'overview'), opacity: deployed ? 1 : 0.5, cursor: deployed ? 'pointer' : 'not-allowed' }}
+          >
             <span style={{ width: 18, textAlign: 'center', fontSize: 14, opacity: 0.8 }}>◎</span>集群详情
           </button>
           <div style={sidebarLabel}>
@@ -284,7 +290,12 @@ export default function App() {
                       下一阶段：{STAGES[step + 1].title} →
                     </button>
                   ) : (
-                    <button onClick={() => setView('overview')} style={btnPrimary}>
+                    <button
+                      onClick={() => deployed && setView('overview')}
+                      disabled={!deployed}
+                      title={deployed ? undefined : '需先完成服务部署，才能进入集群详情'}
+                      style={{ ...btnPrimary, opacity: deployed ? 1 : 0.5, cursor: deployed ? 'pointer' : 'not-allowed' }}
+                    >
                       完成 · 进入集群详情 →
                     </button>
                   )}

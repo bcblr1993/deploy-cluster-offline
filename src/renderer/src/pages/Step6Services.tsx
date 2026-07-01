@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { useWizard } from '../store/wizard'
 import { ipc } from '../ipc/client'
 import StepRunner from '../components/StepRunner'
-import { btnGhost, card, chip, inputStyle } from '../styles/cd'
+import { btnGhost, card, chip } from '../styles/cd'
 import type { DeploymentPreview, ServiceId, ServiceMeta } from '@shared/types'
 
 const tierColor = (t: number): string => (t === 1 ? 'var(--accent)' : t === 2 ? 'var(--ok)' : 'var(--warn)')
@@ -13,13 +13,50 @@ const tierSoft = (t: number): string => (t === 1 ? 'var(--accent-soft)' : t === 
 function dataPathFor(mp: string, instanceId: string): string {
   return `${mp.replace(/\/+$/, '')}/sprixin-iotcloud-data/${instanceId}`
 }
+function fmtBytes(n: number): string {
+  if (!n) return '-'
+  const u = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
+  let i = 0
+  let v = n
+  while (v >= 1024 && i < u.length - 1) {
+    v /= 1024
+    i++
+  }
+  return `${v.toFixed(v >= 100 || i === 0 ? 0 : 1)} ${u[i]}`
+}
 const RECO: Partial<Record<ServiceId, 'ssd' | 'hdd'>> = { postgres: 'ssd', kafka: 'ssd', cassandra: 'hdd' }
+// 数据落盘表格列宽：有状态服务 | 节点 | 推荐介质 | 落盘目标
+const DP_GRID = 'minmax(170px,1.2fr) 120px 138px minmax(260px,2fr)'
+const dpTh: CSSProperties = {
+  padding: '11px 0',
+  fontSize: 11,
+  letterSpacing: '.05em',
+  textTransform: 'uppercase',
+  color: 'var(--faint)',
+  fontWeight: 600,
+  fontFamily: 'var(--mono)'
+}
+const dpSelect: CSSProperties = {
+  width: '100%',
+  appearance: 'none',
+  WebkitAppearance: 'none',
+  padding: '9px 34px 9px 13px',
+  borderRadius: 9,
+  border: '1px solid var(--border-2)',
+  background: 'var(--surface-2)',
+  color: 'var(--text)',
+  fontSize: 12.5,
+  fontFamily: 'var(--mono)',
+  cursor: 'pointer',
+  outline: 'none',
+  textOverflow: 'ellipsis',
+  boxSizing: 'border-box'
+}
 
 export default function Step6Services() {
-  const { nodes, hostnames, probes, placements, togglePlacement, disks, setPlacementDataPath, setView } = useWizard()
+  const { nodes, hostnames, probes, placements, togglePlacement, disks, setPlacementDataPath, setView, deployed, setDeployed } = useWizard()
   const [catalog, setCatalog] = useState<Record<ServiceId, ServiceMeta> | null>(null)
   const [preview, setPreview] = useState<DeploymentPreview | null>(null)
-  const [deployed, setDeployed] = useState(false)
 
   useEffect(() => {
     ipc.getCatalog().then(setCatalog).catch(() => undefined)
@@ -144,40 +181,71 @@ export default function Step6Services() {
         </div>
       </div>
 
-      {/* data placement */}
+      {/* data placement — 对齐网格表格 */}
       {stateful.length > 0 && (
-        <div style={{ ...card, padding: '16px 18px', marginBottom: 16 }}>
-          <div style={{ fontFamily: 'var(--display)', fontWeight: 600, fontSize: 14, marginBottom: 10 }}>数据落盘位置</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {stateful.map((p) => {
-              const mps = mountsOf(p.nodeId)
-              const recoKind = RECO[p.service]
-              const recoMp = recoKind
-                ? mps.filter((m) => (recoKind === 'ssd' ? m.type === 'SSD' : m.type === 'HDD')).sort((a, b) => b.size - a.size)[0]?.mp
-                : undefined
-              return (
-                <div key={p.instanceId} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                  <span style={{ ...chip('accent'), minWidth: 92, justifyContent: 'center' }}>{p.instanceId}</span>
-                  <span style={{ fontSize: 12, color: 'var(--faint)', width: 64 }}>{hostnames[p.nodeId] || nodes.find((n) => n.id === p.nodeId)?.ip}</span>
-                  <span style={chip('warn')}>推荐: {recoKind === 'ssd' ? 'SSD' : recoKind === 'hdd' ? '最大机械盘' : '默认'}</span>
-                  <select
-                    value={p.dataPath ?? ''}
-                    onChange={(e) => setPlacementDataPath(p.instanceId, e.target.value || undefined)}
-                    style={{ ...inputStyle, width: 340 }}
-                  >
-                    <option value="">默认（~/sprixin-iotcloud）</option>
-                    {mps.map((m) => (
-                      <option key={m.mp} value={dataPathFor(m.mp, p.instanceId)}>
-                        {m.mp} · {m.type}
-                        {m.used != null ? ` · 已用 ${m.used}%` : ''}
-                        {m.mp === recoMp ? ' · 推荐' : ''}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )
-            })}
+        <div style={{ ...card, marginBottom: 16 }}>
+          <div style={{ padding: '15px 18px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+            <span style={{ fontFamily: 'var(--display)', fontWeight: 600, fontSize: 14 }}>数据落盘位置</span>
+            <span style={{ fontSize: 12, color: 'var(--faint)' }}>
+              有状态服务的持久化目录 · 留空即用默认安装目录 <span style={{ fontFamily: 'var(--mono)' }}>~/sprixin-iotcloud</span>
+            </span>
           </div>
+          <div style={{ display: 'grid', gridTemplateColumns: DP_GRID, gap: 14, alignItems: 'center', padding: '0 18px', background: 'var(--surface-2)', borderBottom: '1px solid var(--border)' }}>
+            <div style={dpTh}>有状态服务</div>
+            <div style={dpTh}>节点</div>
+            <div style={dpTh}>推荐介质</div>
+            <div style={dpTh}>落盘目标</div>
+          </div>
+          {stateful.map((p) => {
+            const meta = catalog?.[p.service]
+            const mps = mountsOf(p.nodeId)
+            const recoKind = RECO[p.service]
+            const recoMp = recoKind
+              ? mps.filter((m) => (recoKind === 'ssd' ? m.type === 'SSD' : m.type === 'HDD')).sort((a, b) => b.size - a.size)[0]?.mp
+              : undefined
+            const same = placements.filter((x) => x.service === p.service)
+            const cluster = same.length > 1
+            const ordinal = same.findIndex((x) => x.instanceId === p.instanceId) + 1
+            const recoLabel = recoKind === 'ssd' ? 'SSD' : recoKind === 'hdd' ? '大容量 HDD' : '默认目录'
+            const recoDot = recoKind === 'ssd' ? 'var(--accent)' : recoKind === 'hdd' ? 'var(--warn)' : 'var(--faint)'
+            const recoTone: CSSProperties =
+              recoKind === 'ssd'
+                ? { background: 'var(--accent-soft)', color: 'var(--accent-ink)' }
+                : recoKind === 'hdd'
+                  ? { background: 'var(--warn-soft)', color: 'var(--warn)' }
+                  : { background: 'var(--surface-2)', color: 'var(--dim)', border: '1px solid var(--border)' }
+            const node = nodes.find((n) => n.id === p.nodeId)
+            return (
+              <div key={p.instanceId} style={{ display: 'grid', gridTemplateColumns: DP_GRID, gap: 14, alignItems: 'center', padding: '11px 18px', borderTop: '1px solid var(--border)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 9, minWidth: 0 }}>
+                  <span style={chip('accent')}>{meta?.name ?? p.service}</span>
+                  {cluster && <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--faint)' }}>#{ordinal}</span>}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', fontFamily: 'var(--mono)', fontSize: 12.5, color: 'var(--dim)', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {(hostnames[p.nodeId] || node?.ip) + ' · ' + node?.ip}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center' }}>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '3px 10px', borderRadius: 7, fontSize: 11.5, fontWeight: 600, fontFamily: 'var(--mono)', ...recoTone }}>
+                    <span style={{ width: 6, height: 6, borderRadius: 2, background: recoDot, flexShrink: 0 }} />
+                    {recoLabel}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center' }}>
+                  <div style={{ position: 'relative', width: '100%' }}>
+                    <select value={p.dataPath ?? ''} onChange={(e) => setPlacementDataPath(p.instanceId, e.target.value || undefined)} style={dpSelect}>
+                      <option value="">默认目录  ~/sprixin-iotcloud</option>
+                      {mps.map((m) => (
+                        <option key={m.mp} value={dataPathFor(m.mp, p.instanceId)}>
+                          {`${m.mp}  ·  ${m.type}  ·  ${fmtBytes(m.size)}${m.used != null ? `  ·  已用 ${m.used}%` : ''}${m.mp === recoMp ? '   ★ 推荐' : ''}`}
+                        </option>
+                      ))}
+                    </select>
+                    <span style={{ position: 'absolute', right: 13, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: 'var(--faint)', fontSize: 10 }}>▼</span>
+                  </div>
+                </div>
+              </div>
+            )
+          })}
         </div>
       )}
 

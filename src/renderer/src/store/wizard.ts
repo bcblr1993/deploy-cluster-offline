@@ -76,6 +76,8 @@ interface WizardState {
   appView: 'clusters' | 'cluster'
   /** 集群内视图：部署向导 / 运维总览 */
   view: ViewMode
+  /** 本集群是否已完成过服务部署（门禁「进入集群详情」用） */
+  deployed: boolean
   /** 当前打开的集群 */
   clusterId: string | null
   clusterName: string
@@ -84,6 +86,7 @@ interface WizardState {
 
   setStep: (step: number) => void
   setView: (view: ViewMode) => void
+  setDeployed: (b: boolean) => void
   toggleTheme: () => void
   setAppView: (v: 'clusters' | 'cluster') => void
   /** 打开集群：填充工作区状态，按是否部署过决定落到总览/向导 */
@@ -141,11 +144,13 @@ export const useWizard = create<WizardState>((set, get) => ({
   theme: 'light',
   appView: 'clusters',
   view: 'wizard',
+  deployed: false,
   clusterId: null,
   clusterName: '',
 
   setStep: (step) => set({ step }),
   setView: (view) => set({ view }),
+  setDeployed: (b) => set({ deployed: b }),
   setRunOpen: (b) => set({ runOpen: b }),
   closeRun: () => set({ activeRunKey: null, runOpen: false }),
   toggleTheme: () => set((s) => ({ theme: s.theme === 'dark' ? 'light' : 'dark' })),
@@ -163,6 +168,7 @@ export const useWizard = create<WizardState>((set, get) => ({
     set({
       appView: 'cluster',
       view: placements.length > 0 ? 'overview' : 'wizard',
+      deployed: placements.length > 0,
       clusterId: c.id,
       clusterName: c.name,
       clusterRemark: c.remark,
