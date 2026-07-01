@@ -10,6 +10,7 @@ import Step6Services from './pages/Step6Services'
 import Overview from './pages/Overview'
 import ClusterList from './pages/ClusterList'
 import RunConsole from './components/RunConsole'
+import ClusterMark from './components/ClusterMark'
 import { btnGhost, btnPrimary } from './styles/cd'
 
 const STAGES = [
@@ -141,6 +142,7 @@ export default function App() {
           <button title="返回集群列表" disabled={busy} onClick={backToClusters} style={backBtn(busy)}>
             ←
           </button>
+          <ClusterMark size={26} variant="brand" radiusRatio={0.26} style={{ flexShrink: 0 }} title="离线集群部署" />
           <div style={{ display: 'flex', alignItems: 'center', gap: 9, minWidth: 0 }}>
             <span style={{ width: 10, height: 10, borderRadius: '50%', background: deployDone > 0 ? 'var(--ok)' : 'var(--faint)', flexShrink: 0 }} />
             <span style={{ ...display, fontWeight: 600, fontSize: 16, letterSpacing: '-.01em', whiteSpace: 'nowrap' }}>{clusterName || '集群'}</span>

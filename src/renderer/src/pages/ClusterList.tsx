@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState, type CSSProperties } from 'react'
 import { App } from 'antd'
 import { useWizard } from '../store/wizard'
 import { ipc } from '../ipc/client'
+import ClusterMark from '../components/ClusterMark'
 import type { ClusterSummary } from '@shared/types'
 
 type Filter = 'all' | 'deployed' | 'undeployed'
@@ -169,33 +170,7 @@ export default function ClusterList() {
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 13 }}>
-          <div
-            style={{
-              width: 30,
-              height: 30,
-              borderRadius: 8,
-              background: 'var(--accent)',
-              position: 'relative',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              flexShrink: 0
-            }}
-          >
-            <div style={{ width: 13, height: 13, border: '2.5px solid #fff', borderRadius: 3 }} />
-            <div
-              style={{
-                position: 'absolute',
-                right: -3,
-                bottom: -3,
-                width: 11,
-                height: 11,
-                borderRadius: '50%',
-                background: 'var(--ok)',
-                border: '2px solid var(--surface)'
-              }}
-            />
-          </div>
+          <ClusterMark size={32} variant="brand" pip pulse radiusRatio={0.26} style={{ flexShrink: 0 }} />
           <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.15 }}>
             <span style={{ ...display, fontWeight: 600, fontSize: 15, letterSpacing: '-.01em' }}>
               离线集群部署
